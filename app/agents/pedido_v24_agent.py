@@ -1687,13 +1687,9 @@ class PedidoV24Agent:
 
     def _recolha_foto_prompt_for(self, contentor) -> str:
         label = self._equipamento_label(contentor) if contentor else "equipamento"
-        operacao = (
-            "partida"
-            if contentor
-            and contentor.tipo_equipamento == TipoEquipamentoPedido.CARRINHA.value
-            else "recolha"
-        )
-        return f"Envie a foto de {operacao} do {label} cheio antes do icamento."
+        if contentor and contentor.tipo_equipamento == TipoEquipamentoPedido.CARRINHA.value:
+            return f"Envie a foto de partida da {label} carregada."
+        return f"Envie a foto de recolha do {label} cheio antes do içamento."
 
     def _recolha_confirmacao_prompt(self, ctx) -> str:
         contentor = self.db.get(PedidoContentor, ctx["contentor_id"])

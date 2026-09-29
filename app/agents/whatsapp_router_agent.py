@@ -649,8 +649,36 @@ class WhatsappRouterAgent:
             blocos.append("🛠️ *Avarias em Equipamentos:*\n" + "\n".join(
                 linhas
             ))
+        # Divergência de carga no despejo (o motorista respondeu que a carga
+        # não correspondia). Antes não aparecia no painel e o gestor só a
+        # resolvia se soubesse o ID. Como pagamentos, só o gestor vê.
+        cargas = self._cargas_divergentes(pedidos) if perfil == PerfilOperador.GESTOR else []
+        if cargas:
+            blocos.append("⚖️ *Cargas com Divergência no Despejo:*\n" + "\n".join(
+                self._format_carga_divergente(item) for item in cargas
+            ))
         conteudo = "\n\n".join(blocos) if blocos else "• Nenhuma pendência ativa."
         return "🚨 *3. PENDÊNCIAS ATIVAS*\n" + conteudo
+
+    def _cargas_divergentes(self, pedidos: list[Pedido]) -> list[PedidoContentor]:
+        itens = [
+            item for pedido in pedidos for item in pedido.contentores
+            if item.carga_errada
+            and item.status_resolucao_carga == StatusResolucaoPedido.PENDENTE.value
+        ]
+        return sorted(itens, key=lambda item: (item.pedido.nome_cliente, self._equipamento_numero(item), item.id))
+
+    def _format_carga_divergente(self, item: PedidoContentor) -> str:
+        comando = quote(f"resolver carga {item.id}")
+        return "\n".join(
+            [
+                f"• {item.pedido.nome_cliente}",
+                f"  Equipamento Nº {self._numero_equipamento_pedido(item)}",
+                f"  Contratado: {item.residuo_contratado} • Despejado: {item.residuo_efetivo_vazadouro or 'não informado'}",
+                f"  📝 Relato: {item.relato_carga or 'sem relato'}",
+                f"  💬 Resolver: https://wa.me/?text={comando}",
+            ]
+        )
 
     def _painel_v4_financeiro(self, pedidos: list[Pedido], alugueres: list[AluguerContentor], today) -> str:
         # Regra de negócio: "Pago" e o caixa contam o que foi recebido neste
@@ -986,7 +1014,16 @@ class WhatsappRouterAgent:
         return sorted(itens, key=lambda item: (self._equipamento_numero(item), item.id))
 
     def _equipamento_numero(self, item: PedidoContentor) -> str:
+        if item.tipo_equipamento == TipoEquipamentoPedido.CARRINHA.value:
+            return str(item.frota_carrinha or item.numero_adesivo_contentor or "s/ frota")
         return str(item.numero_adesivo_contentor or item.id)
+
+    @staticmethod
+    def _numero_equipamento_pedido(item: PedidoContentor) -> str:
+        if item.tipo_equipamento == TipoEquipamentoPedido.CARRINHA.value:
+            frota = item.frota_carrinha or item.numero_adesivo_contentor
+            return f"{frota} (carrinha)" if frota else "não informado (carrinha)"
+        return str(item.numero_adesivo_contentor or "não informado")
 
     def _format_lista_numeros(self, numeros: list[str]) -> str:
         if len(numeros) <= 1:
@@ -1726,7 +1763,7 @@ class WhatsappRouterAgent:
                 return "Pendência de avaria não encontrada."
             cliente = contentor.pedido.nome_cliente
             pedido = str(contentor.pedido_id)
-            equipamento = str(contentor.numero_adesivo_contentor or "não informado")
+            equipamento = self._numero_equipamento_pedido(contentor)
             relato = self._relato_avaria_para_exibicao(contentor.relato_avaria)
             ocorrencia = contentor.recolha_data_hora
             estado = contentor.status_resolucao_avaria
@@ -1817,7 +1854,7 @@ class WhatsappRouterAgent:
                 contentor = self.db.get(PedidoContentor, alvo_id)
                 self._registrar_auditoria_avaria_atual(contentor, telefone)
                 self.pedido_service.liberar_frota_apos_avaria(contentor)
-                equipamento = str(contentor.numero_adesivo_contentor or "não informado")
+                equipamento = self._numero_equipamento_pedido(contentor)
             else:
                 result = self.db.execute(
                     update(AluguerContentor)
@@ -1889,7 +1926,7 @@ class WhatsappRouterAgent:
         if origem == "pedido":
             contentor = self.db.get(PedidoContentor, alvo_id)
             equipamento = (
-                str(contentor.numero_adesivo_contentor or "não informado")
+                self._numero_equipamento_pedido(contentor)
                 if contentor
                 else "não informado"
             )

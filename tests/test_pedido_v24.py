@@ -3449,3 +3449,42 @@ def test_proximo_passo_depois_de_outra_foto_avanca_sem_nova_imagem(db_session, m
 
     assert "Confirmar despejo" in confirmacao
     assert db_session.query(ConversaWhatsApp).one().estado_atual == "v24_despejo_confirmacao"
+
+
+def test_painel_do_gestor_lista_cargas_divergentes_com_link_de_resolucao(db_session):
+    gestor = "351900010024"
+    operador(db_session, gestor, PerfilOperador.GESTOR)
+    service = PedidoService(db_session)
+    pedido = service.criar(
+        nome_cliente="Cliente Carga Divergente",
+        telefone_cliente="351912345678",
+        data_planejada=datetime.now(timezone.utc),
+        valor_global="100",
+        pago=True,
+        forma_pagamento="MBWay",
+        pedido_feito_por="gestor",
+        endereco_aproximado="Rua",
+        ponto_referencia=None,
+        residuos=["Entulho Limpo"],
+    )
+    item = pedido.contentores[0]
+    service.confirmar_entrega_lote(
+        pedido.id, "motorista", 38.7, -9.1, None,
+        [{"contentor_id": item.id, "numero_adesivo": "41", "fotos": ["f41"]}],
+    )
+    service.confirmar_recolha(item.id, "motorista", False, None)
+    service.confirmar_despejo(
+        item.id, "Entulho Misto", True, "veio com restos de madeira", operador="m", fotos=["d41"]
+    )
+    router = WhatsappRouterAgent(db_session)
+
+    painel = router.handle(msg("5", phone=gestor))
+    router.handle(msg(f"resolver carga {item.id}", phone=gestor))
+    depois = router.handle(msg("5", phone=gestor))
+
+    assert "⚖️ *Cargas com Divergência no Despejo:*" in painel
+    assert "Equipamento Nº 41" in painel
+    assert "Contratado: Entulho Limpo • Despejado: Entulho Misto" in painel
+    assert "veio com restos de madeira" in painel
+    assert f"resolver%20carga%20{item.id}" in painel
+    assert "Cargas com Divergência" not in depois

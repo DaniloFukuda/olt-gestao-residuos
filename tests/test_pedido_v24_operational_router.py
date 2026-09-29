@@ -2546,7 +2546,7 @@ def test_contentor_decide_selecao_recolha_sem_banco_ou_service():
     selection = {
         "contentor_id": 17,
         "modality": TipoEquipamentoPedido.CONTENTOR,
-        "foto_prompt": "Envie a foto de recolha do 📦 Contentor 42 cheio antes do icamento.",
+        "foto_prompt": "Envie a foto de recolha do 📦 Contentor 42 cheio antes do içamento.",
     }
 
     decision = agent.decide_recolha_ativo(conversa, selection)
@@ -2594,7 +2594,7 @@ def test_adapter_recolha_comprova_contentor_vinculado_e_pendente_sem_escrita():
     assert selection == {
         "contentor_id": 17,
         "modality": TipoEquipamentoPedido.CONTENTOR,
-        "foto_prompt": "Envie a foto de recolha do 📦 Contentor 42 cheio antes do icamento.",
+        "foto_prompt": "Envie a foto de recolha do 📦 Contentor 42 cheio antes do içamento.",
     }
     assert contexto == {
         "pedido_id": 9,
