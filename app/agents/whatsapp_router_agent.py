@@ -119,6 +119,13 @@ MAIN_MENU = (
     "5. 📊 Painel de Controle Operacional\n\n"
     "Digite o número da opção desejada."
 )
+CONFIRMAR_CANCELAMENTO_STATE = "confirmar_cancelamento"
+CANCELAMENTO_CONTEXT_KEY = "_cancelamento"
+CANCELAMENTO_SIM = {"1", "sim", "sim, cancelar", "s"}
+CONFIRMAR_CANCELAMENTO_PROMPT = (
+    "❓ Deseja cancelar a operação em curso? O que ainda não foi confirmado "
+    "será descartado.\n\n1. Sim, cancelar\n2. Não, continuar"
+)
 FLUXO_EXPIRADO_MESSAGE = (
     "⏱️ A operação anterior ficou parada por mais de {tempo} e foi encerrada. "
     "As etapas já confirmadas continuam salvas; a etapa que estava em curso "
@@ -218,16 +225,23 @@ class WhatsappRouterAgent:
                 self.db.commit()
             return self._initial_menu(perfil)
 
+        if conversa.estado_atual == CONFIRMAR_CANCELAMENTO_STATE:
+            return self._responder_confirmacao_cancelamento(conversa, text, perfil)
+
         if text in CANCEL_COMMANDS and not (text == "0" and conversa.estado_atual == "v24_entrega_adesivo"):
             if self._has_active_flow(conversa):
-                is_v24_flow = conversa.estado_atual.startswith(PedidoV24OperationalRouter.PREFIX)
-                conversa.estado_atual = "idle"
-                conversa.contexto_json = {}
+                # Regra de negócio: cancelar no meio de uma operação pede
+                # confirmação; um "voltar" ou "0" digitado por engano não
+                # descarta mais o que já foi preenchido.
+                conversa.contexto_json = {
+                    CANCELAMENTO_CONTEXT_KEY: {
+                        "estado": conversa.estado_atual,
+                        "contexto": dict(conversa.contexto_json or {}),
+                    }
+                }
+                conversa.estado_atual = CONFIRMAR_CANCELAMENTO_STATE
                 self.db.commit()
-                if is_v24_flow:
-                    self._queue_initial_menu(perfil)
-                    return "Operação cancelada. Nenhuma alteração foi salva."
-                return CANCELLED_MENU_MESSAGE
+                return CONFIRMAR_CANCELAMENTO_PROMPT
             return "Nenhuma operação em andamento para cancelar.\n\n" + self._initial_menu(perfil)
 
         if conversa.estado_atual == "cadastro_expirado":
@@ -1992,9 +2006,32 @@ class WhatsappRouterAgent:
         self.db.refresh(conversa)
         return conversa
 
+    def _responder_confirmacao_cancelamento(
+        self, conversa: ConversaWhatsApp, text: str, perfil: PerfilOperador
+    ) -> str:
+        guardado = self._contexto_dict(
+            self._contexto_dict(conversa.contexto_json).get(CANCELAMENTO_CONTEXT_KEY)
+        )
+        estado_anterior = guardado.get("estado") or "idle"
+        if text in CANCELAMENTO_SIM or text in CANCEL_COMMANDS:
+            conversa.estado_atual = "idle"
+            conversa.contexto_json = {}
+            self.db.commit()
+            if estado_anterior.startswith(PedidoV24OperationalRouter.PREFIX):
+                self._queue_initial_menu(perfil)
+                return "Operação cancelada. Nenhuma alteração foi salva."
+            return CANCELLED_MENU_MESSAGE
+        conversa.estado_atual = estado_anterior
+        conversa.contexto_json = self._contexto_dict(guardado.get("contexto"))
+        self.db.commit()
+        if estado_anterior in AluguerAgent.ACTIVE_STATES:
+            return "↩️ Operação retomada. " + self._prompt_for_state(estado_anterior)
+        return "↩️ Operação retomada. Responda à última pergunta para continuar."
+
     def _has_active_flow(self, conversa: ConversaWhatsApp) -> bool:
         return (
-            conversa.estado_atual in AluguerAgent.ACTIVE_STATES
+            conversa.estado_atual == CONFIRMAR_CANCELAMENTO_STATE
+            or conversa.estado_atual in AluguerAgent.ACTIVE_STATES
             or conversa.estado_atual in GestaoAluguerAgent.ACTIVE_STATES
             or conversa.estado_atual in EntregaAgent.ACTIVE_STATES
             or conversa.estado_atual in RenovacaoAgent.ACTIVE_STATES

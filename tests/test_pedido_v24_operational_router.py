@@ -4722,7 +4722,9 @@ def test_cancelamento_global_acontece_antes_do_seam(whatsapp_router):
     conversa.contexto_json = {"nome": "parcial"}
     router.db.commit()
 
-    resposta = router.handle(mensagem("cancelar"))
+    pergunta = router.handle(mensagem("cancelar"))
+    assert "Deseja cancelar" in pergunta
+    resposta = router.handle(mensagem("1"))
 
     assert "cancelada" in resposta
     assert spy.calls == []

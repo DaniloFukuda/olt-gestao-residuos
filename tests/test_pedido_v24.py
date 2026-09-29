@@ -1365,7 +1365,9 @@ def test_entrega_v24_exige_foto_e_cancela_sem_persistir(db_session, monkeypatch)
     router.handle(msg("1"))
     router.handle(msg("123"))
     invalid = router.handle(msg("texto em vez de foto"))
-    cancelado = router.handle(msg("cancelar"))
+    # Cancelar no meio da operação pede confirmação ("1. Sim, cancelar").
+    router.handle(msg("cancelar"))
+    cancelado = router.handle(msg("1"))
 
     db_session.refresh(pedido.contentores[0])
     assert "Envie uma imagem" in invalid
@@ -1719,7 +1721,9 @@ def test_recolha_v24_cancelamento_durante_fotos_nao_deixa_foto_orfa(db_session, 
     router.handle(msg("1"))
     router.handle(msg("1"))
     router.handle(msg(kind="image", media="foto-recolha-cancelada"))
-    response = router.handle(msg("cancelar"))
+    # Cancelar no meio da operação pede confirmação ("1. Sim, cancelar").
+    router.handle(msg("cancelar"))
+    response = router.handle(msg("1"))
 
     db_session.refresh(pedido.contentores[0])
     conversa = db_session.query(ConversaWhatsApp).one()
@@ -1771,7 +1775,9 @@ def test_recolha_v24_cancelamento_limpa_contexto_sem_marcar_ativo(db_session, mo
         router.handle(msg("2"))
     if stage == "confirmacao":
         router.handle(msg("1"))
-    response = router.handle(msg("cancelar"))
+    # Cancelar no meio da operação pede confirmação ("1. Sim, cancelar").
+    router.handle(msg("cancelar"))
+    response = router.handle(msg("1"))
 
     db_session.refresh(pedido.contentores[0])
     conversa = db_session.query(ConversaWhatsApp).one()
@@ -2347,7 +2353,9 @@ def test_despejo_v24_cancelamento_durante_fotos_nao_deixa_foto_orfa(db_session, 
     router.handle(msg("1"))
     router.handle(msg("1"))
     router.handle(msg(kind="image", media="foto-despejo-cancelada"))
-    response = router.handle(msg("cancelar"))
+    # Cancelar no meio da operação pede confirmação ("1. Sim, cancelar").
+    router.handle(msg("cancelar"))
+    response = router.handle(msg("1"))
 
     db_session.refresh(pedido.contentores[0])
     conversa = db_session.query(ConversaWhatsApp).one()
@@ -3360,3 +3368,36 @@ def test_fluxo_v24_com_menos_de_duas_horas_continua(db_session, monkeypatch):
     router.handle(msg("351912345678"))
 
     assert db_session.query(ConversaWhatsApp).one().estado_atual != "idle"
+
+
+def test_menu_durante_confirmacao_de_cancelamento_encerra_fluxo(db_session, monkeypatch):
+    liberar_operadores(monkeypatch)
+    router = WhatsappRouterAgent(db_session)
+    router.handle(msg("1"))
+    router.handle(msg("1"))
+    pergunta = router.handle(msg("sair"))
+
+    response = router.handle(msg("menu"))
+
+    conversa = db_session.query(ConversaWhatsApp).one()
+    assert "Deseja cancelar a operação em curso?" in pergunta
+    assert response == MAIN_MENU
+    assert conversa.estado_atual == "idle"
+    assert conversa.contexto_json == {}
+
+
+def test_nao_continuar_retoma_cadastro_legado_com_pergunta(db_session, monkeypatch):
+    from tests.test_agents import iniciar_cadastro_legado
+    from app.services.seed_service import SeedService
+
+    liberar_operadores(monkeypatch)
+    SeedService(db_session).seed_contentores_iniciais()
+    router = WhatsappRouterAgent(db_session)
+    iniciar_cadastro_legado(router, "351900009900")
+
+    router.handle(msg("cancelar"))
+    response = router.handle(msg("2"))
+
+    assert "Operação retomada" in response
+    assert "nome do cliente" in response
+    assert db_session.query(ConversaWhatsApp).one().estado_atual == "aguardando_nome_cliente"

@@ -481,7 +481,11 @@ class TestMenuV4ComandoMenu:
 
 
 class TestMenuV4CancelarAntesConfirmacao:
-    """Caracteriza cancelamento antes da confirmação final."""
+    """Caracteriza cancelamento antes da confirmação final.
+
+    Desde 2026-09 o cancelamento no meio de uma operação pede confirmação
+    ("1. Sim, cancelar / 2. Não, continuar"); os testes confirmam com "1".
+    """
 
     def test_cancelar_comando_cancela_fluxo_ativo_v24(self, db_session, monkeypatch):
         """Comando 'cancelar' cancela fluxo v2.4 ativo e retorna mensagem de cancelamento."""
@@ -489,7 +493,9 @@ class TestMenuV4CancelarAntesConfirmacao:
         router = WhatsappRouterAgent(db_session)
 
         router.handle(msg("novo pedido"))
-        response = router.handle(msg("cancelar"))
+        pergunta = router.handle(msg("cancelar"))
+        assert "deseja cancelar a operação em curso" in pergunta.lower()
+        response = router.handle(msg("1"))
         assert "operação cancelada" in response.lower()
         assert "nenhuma alteração foi salva" in response.lower()
 
@@ -499,7 +505,9 @@ class TestMenuV4CancelarAntesConfirmacao:
         router = WhatsappRouterAgent(db_session)
 
         router.handle(msg("novo pedido"))
-        response = router.handle(msg("cancela"))
+        pergunta = router.handle(msg("cancela"))
+        assert "deseja cancelar a operação em curso" in pergunta.lower()
+        response = router.handle(msg("1"))
         assert "operação cancelada" in response.lower()
 
     def test_sair_comando_cancela_fluxo_ativo_v24(self, db_session, monkeypatch):
@@ -508,7 +516,9 @@ class TestMenuV4CancelarAntesConfirmacao:
         router = WhatsappRouterAgent(db_session)
 
         router.handle(msg("novo pedido"))
-        response = router.handle(msg("sair"))
+        pergunta = router.handle(msg("sair"))
+        assert "deseja cancelar a operação em curso" in pergunta.lower()
+        response = router.handle(msg("1"))
         assert "operação cancelada" in response.lower()
 
     def test_parar_comando_cancela_fluxo_ativo_v24(self, db_session, monkeypatch):
@@ -517,7 +527,9 @@ class TestMenuV4CancelarAntesConfirmacao:
         router = WhatsappRouterAgent(db_session)
 
         router.handle(msg("novo pedido"))
-        response = router.handle(msg("parar"))
+        pergunta = router.handle(msg("parar"))
+        assert "deseja cancelar a operação em curso" in pergunta.lower()
+        response = router.handle(msg("1"))
         assert "operação cancelada" in response.lower()
 
     def test_voltar_comando_cancela_fluxo_ativo_v24(self, db_session, monkeypatch):
@@ -526,7 +538,9 @@ class TestMenuV4CancelarAntesConfirmacao:
         router = WhatsappRouterAgent(db_session)
 
         router.handle(msg("novo pedido"))
-        response = router.handle(msg("voltar"))
+        pergunta = router.handle(msg("voltar"))
+        assert "deseja cancelar a operação em curso" in pergunta.lower()
+        response = router.handle(msg("1"))
         assert "operação cancelada" in response.lower()
 
     def test_zero_comando_cancela_fluxo_ativo_v24_exceto_adesivo(self, db_session, monkeypatch):
@@ -535,8 +549,30 @@ class TestMenuV4CancelarAntesConfirmacao:
         router = WhatsappRouterAgent(db_session)
 
         router.handle(msg("novo pedido"))
-        response = router.handle(msg("0"))
+        pergunta = router.handle(msg("0"))
+        assert "deseja cancelar a operação em curso" in pergunta.lower()
+        response = router.handle(msg("1"))
         assert "operação cancelada" in response.lower()
+
+    def test_nao_continuar_retoma_fluxo_v24_com_contexto(self, db_session, monkeypatch):
+        """"2. Não, continuar" devolve a conversa ao estado e contexto anteriores."""
+        liberar_operadores(monkeypatch)
+        router = WhatsappRouterAgent(db_session)
+
+        router.handle(msg("novo pedido"))
+        router.handle(msg("1"))
+        router.handle(msg("Cliente Retomado"))
+        conversa = db_session.query(ConversaWhatsApp).one()
+        estado, contexto = conversa.estado_atual, dict(conversa.contexto_json)
+
+        router.handle(msg("voltar"))
+        response = router.handle(msg("2"))
+
+        db_session.expire_all()
+        conversa = db_session.query(ConversaWhatsApp).one()
+        assert "operação retomada" in response.lower()
+        assert conversa.estado_atual == estado
+        assert conversa.contexto_json == contexto
 
     def test_cancelar_sem_fluxo_ativo_retorna_menu(self, db_session, monkeypatch):
         """Cancelar sem fluxo ativo retorna mensagem informativa + menu."""

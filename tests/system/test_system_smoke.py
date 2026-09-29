@@ -57,7 +57,8 @@ def test_sys_005_cancelamento_durante_cadastro_de_contentor(system_app, gestor, 
     runner.add_step("abre cadastro", lambda: driver.send_text("1"), lambda r: r.status_code == 200)
     runner.add_step("seleciona contentor", lambda: driver.send_text("1"))
     runner.add_step("informa cliente", lambda: driver.send_text("Cliente SYS 005"))
-    runner.add_step("cancela", lambda: driver.send_text("cancelar"))
+    runner.add_step("pede cancelamento", lambda: driver.send_text("cancelar"))
+    runner.add_step("confirma cancelamento", lambda: driver.send_text("1"))
 
     runner.run()
 

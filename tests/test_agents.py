@@ -541,7 +541,9 @@ def test_cancelamento_global_no_cadastro_aguardando_foto_limpa_sessao_sem_salvar
 
     iniciar_cadastro_legado(router, "351900001020")
     router.handle(text_message("1", telefone="351900001020"))
-    response = router.handle(text_message("cancelar", telefone="351900001020"))
+    # Cancelar no meio da operação pede confirmação ("1. Sim, cancelar").
+    router.handle(text_message("cancelar", telefone="351900001020"))
+    response = router.handle(text_message("1", telefone="351900001020"))
     conversa = db_session.query(ConversaWhatsApp).filter_by(telefone="351900001020").one()
 
     assert response == CANCELLED_MENU_MESSAGE
@@ -566,7 +568,9 @@ def test_cancelamento_global_no_cadastro_aguardando_localizacao_limpa_sessao_sem
             mime_type="image/jpeg",
         )
     )
-    response = router.handle(text_message("cancelar", telefone="351900001021"))
+    # Cancelar no meio da operação pede confirmação ("1. Sim, cancelar").
+    router.handle(text_message("cancelar", telefone="351900001021"))
+    response = router.handle(text_message("1", telefone="351900001021"))
     conversa = db_session.query(ConversaWhatsApp).filter_by(telefone="351900001021").one()
 
     assert response == CANCELLED_MENU_MESSAGE
@@ -591,7 +595,9 @@ def test_cancelamento_global_com_zero_no_cadastro_aguardando_localizacao(db_sess
             mime_type="image/jpeg",
         )
     )
-    response = router.handle(text_message("0", telefone="351900001022"))
+    # Cancelar no meio da operação pede confirmação ("1. Sim, cancelar").
+    router.handle(text_message("0", telefone="351900001022"))
+    response = router.handle(text_message("1", telefone="351900001022"))
     conversa = db_session.query(ConversaWhatsApp).filter_by(telefone="351900001022").one()
 
     assert response == CANCELLED_MENU_MESSAGE
@@ -675,7 +681,9 @@ def test_cancelamento_global_na_alteracao_nao_altera_registro(db_session, monkey
 
     router.handle(text_message("alterar"))
     router.handle(text_message("1"))
-    response = router.handle(text_message("cancelar"))
+    # Cancelar no meio da operação pede confirmação ("1. Sim, cancelar").
+    router.handle(text_message("cancelar"))
+    response = router.handle(text_message("1"))
     conversa = db_session.query(ConversaWhatsApp).filter_by(telefone="351900000000").one()
     db_session.refresh(aluguer)
 
@@ -858,11 +866,14 @@ def test_cancelamento_global_na_exclusao_nao_marca_registro_como_excluido(db_ses
 
     router.handle(text_message("excluir"))
     router.handle(text_message("1"))
-    response_cancelar = router.handle(text_message("cancelar"))
+    # Cancelar no meio da operação pede confirmação ("1. Sim, cancelar").
+    router.handle(text_message("cancelar"))
+    response_cancelar = router.handle(text_message("1"))
 
     router.handle(text_message("excluir"))
     router.handle(text_message("1"))
-    response_zero = router.handle(text_message("0"))
+    router.handle(text_message("0"))
+    response_zero = router.handle(text_message("1"))
     conversa = db_session.query(ConversaWhatsApp).filter_by(telefone="351900000000").one()
     db_session.refresh(aluguer_cancelar)
     db_session.refresh(aluguer_zero)
@@ -1032,7 +1043,9 @@ def test_cancelamento_global_na_alteracao_status_contentor_nao_altera(db_session
 
     router.handle(text_message("alterar contentor"))
     router.handle(text_message("1"))
-    response = router.handle(text_message("cancelar"))
+    # Cancelar no meio da operação pede confirmação ("1. Sim, cancelar").
+    router.handle(text_message("cancelar"))
+    response = router.handle(text_message("1"))
     contentor = db_session.query(Contentor).filter_by(codigo="1").one()
 
     assert response == CANCELLED_MENU_MESSAGE
@@ -1137,7 +1150,9 @@ def test_cancelamento_global_na_renovacao_nao_cria_novo_registro(db_session, mon
 
     router.handle(text_message("renovar"))
     router.handle(text_message("1"))
-    response = router.handle(text_message("cancelar"))
+    # Cancelar no meio da operação pede confirmação ("1. Sim, cancelar").
+    router.handle(text_message("cancelar"))
+    response = router.handle(text_message("1"))
     conversa = db_session.query(ConversaWhatsApp).filter_by(telefone="351900000000").one()
     alugueres = db_session.query(AluguerContentor).order_by(AluguerContentor.id).all()
 
