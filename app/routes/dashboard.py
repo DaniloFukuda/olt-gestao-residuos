@@ -1,12 +1,34 @@
-from fastapi import APIRouter, Depends
+import hmac
+
+from fastapi import APIRouter, Depends, Header, HTTPException
 from sqlalchemy.orm import Session
 
+from app.core.config import get_settings
 from app.core.db import get_db
 from app.services.aluguer_service import AluguerService
 from app.services.contentor_service import ContentorService
 from app.services.reminder_service import ReminderService
 
-router = APIRouter(prefix="/dashboard", tags=["dashboard"])
+
+
+def _dashboard_autorizado(x_dashboard_token: str | None = Header(default=None)) -> None:
+    """Os endpoints devolvem dados de clientes (nome, telefone): exigem token.
+
+    Sem DASHBOARD_TOKEN no .env os endpoints ficam desligados (404).
+    """
+    esperado = get_settings().dashboard_token.strip()
+    if not esperado:
+        raise HTTPException(status_code=404, detail="Not Found")
+    recebido = (x_dashboard_token or "").encode("utf-8")
+    if not hmac.compare_digest(recebido, esperado.encode("utf-8")):
+        raise HTTPException(status_code=401, detail="Invalid dashboard token")
+
+
+router = APIRouter(
+    prefix="/dashboard",
+    tags=["dashboard"],
+    dependencies=[Depends(_dashboard_autorizado)],
+)
 
 
 @router.get("/contentores")

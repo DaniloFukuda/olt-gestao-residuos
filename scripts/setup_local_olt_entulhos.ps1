@@ -7,12 +7,14 @@ $ErrorActionPreference = "Stop"
 $ProjectRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 Set-Location $ProjectRoot
 
-$VerifyToken = "olt_entulhos_webhook_2026_danilo"
+# Valores de exemplo (fictícios). Quando o .env já tem um valor preenchido,
+# o script mantém o valor existente; estes só preenchem variáveis vazias.
+$VerifyToken = "troque-este-token"
 $RequiredEnv = [ordered]@{
-    "AUTHORIZED_OPERATOR_PHONE" = "556198266551"
-    "AUTHORIZED_OPERATOR_PHONES" = "556198266551"
-    "WHATSAPP_BUSINESS_ACCOUNT_ID" = "1502228507690349"
-    "WHATSAPP_PHONE_NUMBER_ID" = "1148807428322172"
+    "AUTHORIZED_OPERATOR_PHONE" = "351900000001"
+    "AUTHORIZED_OPERATOR_PHONES" = "351900000001"
+    "WHATSAPP_BUSINESS_ACCOUNT_ID" = "100000000000001"
+    "WHATSAPP_PHONE_NUMBER_ID" = "100000000000002"
     "WHATSAPP_VERIFY_TOKEN" = $VerifyToken
     "WHATSAPP_API_VERSION" = "v25.0"
     "ENV" = "development"
@@ -61,7 +63,7 @@ function Update-EnvFile {
         }
     }
 
-    foreach ($key in $RequiredEnv.Keys) {
+    foreach ($key in @($RequiredEnv.Keys)) {
         $value = $RequiredEnv[$key]
         $pattern = "^\s*$([regex]::Escape($key))\s*="
         $foundIndex = -1
@@ -70,7 +72,13 @@ function Update-EnvFile {
             if ($lines[$i] -match $pattern) {
                 if ($foundIndex -eq -1) {
                     $foundIndex = $i
-                    $lines[$i] = "$key=$value"
+                    $existing = ($lines[$i] -split "=", 2)[1].Trim()
+                    if ($existing) {
+                        $RequiredEnv[$key] = $existing
+                        $lines[$i] = "$key=$existing"
+                    } else {
+                        $lines[$i] = "$key=$value"
+                    }
                 } else {
                     $lines.RemoveAt($i)
                     $i--
@@ -84,6 +92,7 @@ function Update-EnvFile {
     }
 
     Set-Content -LiteralPath $envPath -Value $lines -Encoding UTF8
+    $script:VerifyToken = $RequiredEnv["WHATSAPP_VERIFY_TOKEN"]
 
     Write-Host "Variaveis locais ajustadas:"
     foreach ($key in $RequiredEnv.Keys) {

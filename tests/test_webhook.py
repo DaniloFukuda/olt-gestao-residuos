@@ -51,7 +51,7 @@ def test_webhook_com_status_delivered_nao_envia_resposta(client, monkeypatch):
                                     "id": "wamid.fake",
                                     "status": "delivered",
                                     "timestamp": "1730000000",
-                                    "recipient_id": "556198266551",
+                                    "recipient_id": "351900000001",
                                 }
                             ]
                         }
@@ -72,20 +72,20 @@ def test_payload_fake_meta_e_parseado_corretamente():
         "object": "whatsapp_business_account",
         "entry": [
             {
-                "id": "1502228507690349",
+                "id": "100000000000001",
                 "changes": [
                     {
                         "field": "messages",
                         "value": {
                             "messaging_product": "whatsapp",
                             "metadata": {
-                                "display_phone_number": "556196870361",
-                                "phone_number_id": "1148807428322172",
+                                "display_phone_number": "351900000002",
+                                "phone_number_id": "100000000000002",
                             },
-                            "contacts": [{"profile": {"name": "Danilo Fukuda"}, "wa_id": "556198266551"}],
+                            "contacts": [{"profile": {"name": "Operador Teste"}, "wa_id": "351900000001"}],
                             "messages": [
                                 {
-                                    "from": "556198266551",
+                                    "from": "351900000001",
                                     "id": "wamid.fake",
                                     "timestamp": "1780000000",
                                     "type": "location",
@@ -107,7 +107,200 @@ def test_payload_fake_meta_e_parseado_corretamente():
     messages = parse_whatsapp_payload(payload)
 
     assert len(messages) == 1
-    assert messages[0].telefone == "556198266551"
+    assert messages[0].telefone == "351900000001"
     assert messages[0].tipo == "location"
     assert messages[0].latitude == 38.7223
     assert messages[0].longitude == -9.1393
+    assert messages[0].location_name == "Obra teste Lisboa"
+    assert messages[0].location_address == "Lisboa, Portugal"
+    assert messages[0].texto == (
+        "Obra teste Lisboa - Lisboa, Portugal - https://www.google.com/maps?q=38.7223,-9.1393"
+    )
+
+
+def test_payload_interactive_button_reply_vira_texto_da_opcao():
+    payload = {
+        "entry": [
+            {
+                "changes": [
+                    {
+                        "value": {
+                            "messages": [
+                                {
+                                    "from": "351900000001",
+                                    "id": "wamid.button",
+                                    "type": "interactive",
+                                    "interactive": {
+                                        "type": "button_reply",
+                                        "button_reply": {"id": "1", "title": "Sim"},
+                                    },
+                                }
+                            ]
+                        }
+                    }
+                ]
+            }
+        ]
+    }
+
+    messages = parse_whatsapp_payload(payload)
+
+    assert len(messages) == 1
+    assert messages[0].telefone == "351900000001"
+    assert messages[0].tipo == "interactive"
+    assert messages[0].texto == "1"
+
+
+def test_payload_interactive_button_reply_preserva_id_especifico():
+    payload = {
+        "entry": [
+            {
+                "changes": [
+                    {
+                        "value": {
+                            "messages": [
+                                {
+                                    "from": "351900000001",
+                                    "id": "wamid.button",
+                                    "type": "interactive",
+                                    "interactive": {
+                                        "type": "button_reply",
+                                        "button_reply": {
+                                            "id": "pedido_mao_obra_sim",
+                                            "title": "✅ Sim",
+                                        },
+                                    },
+                                }
+                            ]
+                        }
+                    }
+                ]
+            }
+        ]
+    }
+
+    messages = parse_whatsapp_payload(payload)
+
+    assert messages[0].texto == "pedido_mao_obra_sim"
+
+
+def test_payload_location_sem_coordenadas_validas_nao_gera_texto():
+    payload = {
+        "entry": [
+            {
+                "changes": [
+                    {
+                        "value": {
+                            "messages": [
+                                {
+                                    "from": "351900000001",
+                                    "id": "wamid.location",
+                                    "type": "location",
+                                    "location": {"name": "Obra sem coordenadas"},
+                                }
+                            ]
+                        }
+                    }
+                ]
+            }
+        ]
+    }
+
+    messages = parse_whatsapp_payload(payload)
+
+    assert messages[0].tipo == "location"
+    assert messages[0].texto is None
+
+
+def test_payload_contacts_extrai_nome_e_prefere_wa_id():
+    payload = {
+        "entry": [
+            {
+                "changes": [
+                    {
+                        "value": {
+                            "messages": [
+                                {
+                                    "from": "351900000000",
+                                    "id": "wamid.contact",
+                                    "type": "contacts",
+                                    "contacts": [
+                                        {
+                                            "name": {"formatted_name": "Cliente WhatsApp"},
+                                            "phones": [
+                                                {
+                                                    "phone": "+351 913 000 111",
+                                                    "wa_id": "351913000999",
+                                                }
+                                            ],
+                                        }
+                                    ],
+                                }
+                            ]
+                        }
+                    }
+                ]
+            }
+        ]
+    }
+
+    messages = parse_whatsapp_payload(payload)
+
+    assert len(messages) == 1
+    assert messages[0].tipo == "contacts"
+    assert messages[0].contact_name == "Cliente WhatsApp"
+    assert messages[0].contact_phone == "351913000999"
+
+
+def test_payload_contacts_usa_primeiro_phone_quando_nao_ha_wa_id():
+    payload = {
+        "entry": [
+            {
+                "changes": [
+                    {
+                        "value": {
+                            "messages": [
+                                {
+                                    "from": "351900000000",
+                                    "id": "wamid.contact",
+                                    "type": "contacts",
+                                    "contacts": [
+                                        {
+                                            "formatted_name": "Empresa Cliente",
+                                            "phones": [{"phone": "+351 914 000 222"}],
+                                        }
+                                    ],
+                                }
+                            ]
+                        }
+                    }
+                ]
+            }
+        ]
+    }
+
+    messages = parse_whatsapp_payload(payload)
+
+    assert messages[0].contact_name == "Empresa Cliente"
+    assert messages[0].contact_phone == "+351 914 000 222"
+
+
+def test_payload_malformado_nao_derruba_o_webhook():
+    payloads = [
+        {"entry": "x"},
+        {"entry": ["x", {"changes": "y"}]},
+        {"entry": [{"changes": [{"value": "z"}]}]},
+        {"entry": [{"changes": [{"value": {"messages": ["m", None]}}]}]},
+        {"entry": [{"changes": [{"value": {"messages": [
+            {"from": "351900000000", "id": "a", "type": "text", "text": "nao-dict"},
+            {"from": "351900000000", "id": "b", "type": "interactive", "interactive": {"button_reply": "x"}},
+            {"from": "351900000000", "id": "c", "type": "location", "location": None},
+            {"from": 351900000000, "id": "d", "type": "text", "text": {"body": "oi"}},
+        ]}}]}]},
+    ]
+
+    parsed = [parse_whatsapp_payload(payload) for payload in payloads]
+
+    assert parsed[:4] == [[], [], [], []]
+    assert [m.message_id for m in parsed[4]] == ["a", "b", "c"]
+    assert all(m.texto is None for m in parsed[4])

@@ -1,0 +1,325 @@
+from types import SimpleNamespace
+
+import app.services.operador_service as operador_service_module
+from app.agents.whatsapp_router_agent import WhatsappRouterAgent
+from app.integrations.whatsapp.parser import NormalizedWhatsAppMessage
+from app.models.aluguer import AluguerContentor, ContentorFoto, StatusEntrega
+from app.models.contentor import Contentor, StatusContentor
+from app.models.conversa import ConversaWhatsApp
+from app.models.operador import Operador, PerfilOperador
+from app.services.seed_service import SeedService
+
+
+def text_message(texto: str, telefone: str = "351900009000") -> NormalizedWhatsAppMessage:
+    return NormalizedWhatsAppMessage(telefone=telefone, tipo="text", texto=texto, message_id="m1")
+
+
+def image_message(media_id: str = "media-entrega-1", telefone: str = "351900009000") -> NormalizedWhatsAppMessage:
+    return NormalizedWhatsAppMessage(
+        telefone=telefone,
+        tipo="image",
+        media_id=media_id,
+        mime_type="image/jpeg",
+        message_id=media_id,
+    )
+
+
+def location_message(latitude: float, longitude: float, telefone: str = "351900009000") -> NormalizedWhatsAppMessage:
+    return NormalizedWhatsAppMessage(
+        telefone=telefone,
+        tipo="location",
+        latitude=latitude,
+        longitude=longitude,
+        message_id="loc1",
+    )
+
+
+def liberar_operadores(monkeypatch):
+    settings = SimpleNamespace(
+        authorized_operator_phone="",
+        authorized_operator_phones=",".join(
+            (
+                "351900009000", "351900009001", "351900009002", "351900009003",
+                "351900009004", "351900009005", "351900009010", "351900009099",
+            )
+        ),
+    )
+    monkeypatch.setattr(operador_service_module, "get_settings", lambda: settings)
+
+def iniciar_cadastro_legado(router, telefone):
+    """Abre o cadastro unitário legado (AluguerAgent).
+
+    "novo" passou a abrir o Novo Pedido V24; o fluxo legado só continua a
+    atender conversas que já estavam nele, por isso os testes dele o abrem
+    diretamente.
+    """
+    conversa = router._get_or_create_conversa(telefone)
+    return router.aluguer_agent.start(conversa)
+
+
+
+def avancar_ate_valor(router: WhatsappRouterAgent, telefone: str = "351900009000"):
+    iniciar_cadastro_legado(router, telefone)
+    router.handle(text_message("Cliente Pedido", telefone=telefone))
+    router.handle(text_message("+351 912 345 678", telefone=telefone))
+    router.handle(text_message("1", telefone=telefone))
+    return router.handle(text_message("2", telefone=telefone))
+
+
+def test_cadastro_pedido_atendente_salva_entrega_pendente_sem_foto_ou_gps_real(db_session, monkeypatch):
+    liberar_operadores(monkeypatch)
+    SeedService(db_session).seed_contentores_iniciais()
+    router = WhatsappRouterAgent(db_session)
+
+    states = []
+    responses = []
+    telefone = "351900009000"
+
+    responses.append(iniciar_cadastro_legado(router, telefone))
+    states.append(db_session.query(ConversaWhatsApp).filter_by(telefone=telefone).one().estado_atual)
+    responses.append(router.handle(text_message("Cliente Pedido", telefone=telefone)))
+    states.append(db_session.query(ConversaWhatsApp).filter_by(telefone=telefone).one().estado_atual)
+    responses.append(router.handle(text_message("+351 912 345 678", telefone=telefone)))
+    states.append(db_session.query(ConversaWhatsApp).filter_by(telefone=telefone).one().estado_atual)
+    responses.append(router.handle(text_message("1", telefone=telefone)))
+    states.append(db_session.query(ConversaWhatsApp).filter_by(telefone=telefone).one().estado_atual)
+    responses.append(router.handle(text_message("2", telefone=telefone)))
+    states.append(db_session.query(ConversaWhatsApp).filter_by(telefone=telefone).one().estado_atual)
+    responses.append(router.handle(text_message("150,50", telefone=telefone)))
+    states.append(db_session.query(ConversaWhatsApp).filter_by(telefone=telefone).one().estado_atual)
+    responses.append(router.handle(text_message("2", telefone=telefone)))
+    states.append(db_session.query(ConversaWhatsApp).filter_by(telefone=telefone).one().estado_atual)
+    responses.append(router.handle(text_message("2", telefone=telefone)))
+    states.append(db_session.query(ConversaWhatsApp).filter_by(telefone=telefone).one().estado_atual)
+    responses.append(router.handle(text_message("Rua Direita, proximo ao numero 50", telefone=telefone)))
+    states.append(db_session.query(ConversaWhatsApp).filter_by(telefone=telefone).one().estado_atual)
+    responses.append(router.handle(text_message("2", telefone=telefone)))
+    states.append(db_session.query(ConversaWhatsApp).filter_by(telefone=telefone).one().estado_atual)
+    responses.append(router.handle(text_message("1", telefone=telefone)))
+    states.append(db_session.query(ConversaWhatsApp).filter_by(telefone=telefone).one().estado_atual)
+
+    aluguer = db_session.query(AluguerContentor).order_by(AluguerContentor.id.desc()).one()
+
+    assert states == [
+        "aguardando_nome_cliente",
+        "aguardando_telefone_cliente",
+        "aguardando_confirmacao_data_entrega",
+        "aguardando_tipo_residuo",
+        "aguardando_valor",
+        "aguardando_pago",
+        "aguardando_tipo_endereco_pedido",
+        "aguardando_endereco_pedido_texto",
+        "aguardando_ponto_referencia_opcao",
+        "aguardando_confirmacao_final",
+        "idle",
+    ]
+    assert "Cadastro de pedido iniciado" in responses[0]
+    assert "Pedido salvo com sucesso" in responses[-1]
+    assert aluguer.nome_cliente == "Cliente Pedido"
+    assert aluguer.telefone_cliente == "351912345678"
+    assert aluguer.tipo_residuo == "Entulho Misto"
+    assert aluguer.pago is False
+    assert aluguer.forma_pagamento is None
+    assert aluguer.status_entrega == StatusEntrega.PENDENTE.value
+    assert aluguer.numero_contentor == "A definir"
+    assert db_session.query(Contentor).filter_by(codigo="1").one().status == StatusContentor.DISPONIVEL
+    assert aluguer.pedido_feito_por == telefone
+    assert aluguer.entrega_feita_por is None
+    assert aluguer.pedido_endereco_tipo == "TEXTO"
+    assert aluguer.pedido_endereco_texto == "Rua Direita, proximo ao numero 50"
+    assert aluguer.pedido_ponto_referencia is None
+    assert aluguer.foto_entrega_path is None
+    assert aluguer.latitude is None
+    assert aluguer.longitude is None
+    assert "pedido_criado" in {evento.tipo for evento in aluguer.eventos}
+    assert "entrega" not in {evento.tipo for evento in aluguer.eventos}
+
+
+def test_entrega_vincula_contentor_somente_na_entrega(db_session, monkeypatch):
+    liberar_operadores(monkeypatch)
+    SeedService(db_session).seed_contentores_iniciais()
+    router = WhatsappRouterAgent(db_session)
+    telefone = "351900009010"
+
+    avancar_ate_valor(router, telefone=telefone)
+    router.handle(text_message("120", telefone=telefone))
+    router.handle(text_message("2", telefone=telefone))
+    router.handle(text_message("2", telefone=telefone))
+    router.handle(text_message("Rua da Entrega", telefone=telefone))
+    router.handle(text_message("2", telefone=telefone))
+    router.handle(text_message("1", telefone=telefone))
+    aluguer = db_session.query(AluguerContentor).order_by(AluguerContentor.id.desc()).one()
+
+    assert aluguer.status_entrega == StatusEntrega.PENDENTE.value
+    assert aluguer.numero_contentor == "A definir"
+    assert db_session.query(Contentor).filter_by(codigo="2").one().status == StatusContentor.DISPONIVEL
+
+    start = router.handle(text_message("2", telefone=telefone))
+    prompt_contentor = router.handle(text_message("1", telefone=telefone))
+    foto_prompt = router.handle(text_message("2", telefone=telefone))
+    mais_foto = router.handle(image_message("media-entrega-1", telefone=telefone))
+    gps_prompt = router.handle(text_message("2", telefone=telefone))
+    referencia_prompt = router.handle(location_message(38.7223, -9.1393, telefone=telefone))
+    referencia_texto_prompt = router.handle(text_message("1", telefone=telefone))
+    pagamento_prompt = router.handle(text_message("Portao azul", telefone=telefone))
+    forma_prompt = router.handle(text_message("1", telefone=telefone))
+    final = router.handle(text_message("1", telefone=telefone))
+    db_session.refresh(aluguer)
+
+    assert "Entrega de contentor" in start
+    assert "Informe o contentor entregue" in prompt_contentor
+    assert "envie a foto" in foto_prompt
+    assert "Deseja adicionar mais uma foto" in mais_foto
+    assert "localizacao GPS exata" in gps_prompt
+    assert "ponto de referencia" in referencia_prompt
+    assert "Digite o ponto de referencia" in referencia_texto_prompt
+    assert "pagamento no ato" in pagamento_prompt
+    assert "forma de pagamento" in forma_prompt
+    assert "Entrega do contentor registrada" in final
+    assert aluguer.status_entrega == StatusEntrega.ENTREGUE.value
+    assert aluguer.numero_contentor == "2"
+    assert aluguer.contentor.codigo == "2"
+    assert aluguer.entrega_feita_por == telefone
+    assert aluguer.entrega_latitude == 38.7223
+    assert aluguer.entrega_longitude == -9.1393
+    assert aluguer.entrega_ponto_referencia == "Portao azul"
+    assert aluguer.pago is True
+    assert aluguer.forma_pagamento == "MBWay"
+    assert db_session.query(ContentorFoto).filter_by(aluguer_id=aluguer.id).count() == 1
+    assert db_session.query(Contentor).filter_by(codigo="2").one().status == StatusContentor.ALUGADO
+
+
+def test_entrega_explica_numero_invalido_e_bloqueia_contentor_alugado(db_session, monkeypatch):
+    liberar_operadores(monkeypatch)
+    SeedService(db_session).seed_contentores_iniciais()
+    router = WhatsappRouterAgent(db_session)
+    telefone = "351900009099"
+
+    avancar_ate_valor(router, telefone=telefone)
+    for resposta in ("120", "2", "2", "Rua da Entrega", "2", "1"):
+        router.handle(text_message(resposta, telefone=telefone))
+
+    contentor = db_session.query(Contentor).filter_by(codigo="7").one()
+    contentor.status = StatusContentor.ALUGADO
+    db_session.commit()
+
+    router.handle(text_message("2", telefone=telefone))
+    router.handle(text_message("1", telefone=telefone))
+    invalido = router.handle(text_message("07", telefone=telefone))
+    alugado = router.handle(text_message("7", telefone=telefone))
+    conversa = db_session.query(ConversaWhatsApp).filter_by(telefone=telefone).one()
+
+    assert "inteiro de 1 a 99" in invalido
+    assert "sem letras e sem zero a esquerda" in invalido
+    assert alugado == (
+        "O contentor 7 ja esta alugado e nao pode ser usado nesta entrega. "
+        "Informe outro numero de contentor disponivel."
+    )
+    assert conversa.estado_atual == "entrega_aguardando_contentor"
+
+
+def test_cadastro_valor_rejeita_valor_absurdo(db_session, monkeypatch):
+    liberar_operadores(monkeypatch)
+    SeedService(db_session).seed_contentores_iniciais()
+    router = WhatsappRouterAgent(db_session)
+    telefone = "351900009001"
+
+    avancar_ate_valor(router, telefone=telefone)
+    invalid = router.handle(text_message("80000000000000000.00", telefone=telefone))
+    conversa = db_session.query(ConversaWhatsApp).filter_by(telefone=telefone).one()
+
+    assert "Valor invalido" in invalid
+    assert conversa.estado_atual == "aguardando_valor"
+
+    still_invalid = router.handle(text_message("1000", telefone=telefone))
+    conversa = db_session.query(ConversaWhatsApp).filter_by(telefone=telefone).one()
+
+    assert "Valor invalido" in still_invalid
+    assert conversa.estado_atual == "aguardando_valor"
+
+    valid = router.handle(text_message("999,99", telefone=telefone))
+    conversa = db_session.query(ConversaWhatsApp).filter_by(telefone=telefone).one()
+
+    assert "pedido ja esta pago" in valid
+    assert conversa.estado_atual == "aguardando_pago"
+
+
+def test_cadastro_endereco_aceita_link_google_maps_com_coordenadas(db_session, monkeypatch):
+    liberar_operadores(monkeypatch)
+    SeedService(db_session).seed_contentores_iniciais()
+    router = WhatsappRouterAgent(db_session)
+    telefone = "351900009002"
+
+    avancar_ate_valor(router, telefone=telefone)
+    router.handle(text_message("120", telefone=telefone))
+    router.handle(text_message("1", telefone=telefone))
+    router.handle(text_message("mbway", telefone=telefone))
+    router.handle(text_message("1", telefone=telefone))
+    response = router.handle(text_message("https://www.google.com/maps?q=38.7223,-9.1393", telefone=telefone))
+
+    conversa = db_session.query(ConversaWhatsApp).filter_by(telefone=telefone).one()
+    assert "ponto de referencia" in response
+    assert conversa.contexto_json["pedido_endereco_tipo"] == "LOCALIZACAO"
+    assert conversa.contexto_json["pedido_latitude"] == 38.7223
+    assert conversa.contexto_json["pedido_longitude"] == -9.1393
+    assert conversa.estado_atual == "aguardando_ponto_referencia_opcao"
+
+
+def test_cadastro_endereco_aceita_link_google_maps_com_3d_4d(db_session, monkeypatch):
+    liberar_operadores(monkeypatch)
+    SeedService(db_session).seed_contentores_iniciais()
+    router = WhatsappRouterAgent(db_session)
+    telefone = "351900009003"
+
+    avancar_ate_valor(router, telefone=telefone)
+    router.handle(text_message("120", telefone=telefone))
+    router.handle(text_message("1", telefone=telefone))
+    router.handle(text_message("mbway", telefone=telefone))
+    router.handle(text_message("1", telefone=telefone))
+    response = router.handle(
+        text_message("https://www.google.com/maps/place/OLT/@38.7223,-9.1393,17z/data=!3d38.7223!4d-9.1393", telefone=telefone)
+    )
+
+    conversa = db_session.query(ConversaWhatsApp).filter_by(telefone=telefone).one()
+    assert "ponto de referencia" in response
+    assert conversa.contexto_json["pedido_latitude"] == 38.7223
+    assert conversa.contexto_json["pedido_longitude"] == -9.1393
+
+
+def test_menu_funcionario_mostra_entrega_e_recolha(db_session, monkeypatch):
+    liberar_operadores(monkeypatch)
+    telefone = "351900009004"
+    db_session.add(
+        Operador(
+            telefone_whatsapp=telefone,
+            nome_operador="Motorista",
+            perfil=PerfilOperador.FUNCIONARIO,
+            ativo=True,
+        )
+    )
+    db_session.commit()
+
+    response = WhatsappRouterAgent(db_session).handle(text_message("menu", telefone=telefone))
+
+    assert "1. 🟢 Novo Pedido" in response
+    assert "2. 🚛 Confirmar Chegada / Entrega" in response
+    assert "3. 📦 Confirmar Recolha / Partida" in response
+
+
+def test_funcionario_opcao_1_respeita_permissao_de_cadastro(db_session, monkeypatch):
+    liberar_operadores(monkeypatch)
+    telefone = "351900009005"
+    db_session.add(
+        Operador(
+            telefone_whatsapp=telefone,
+            nome_operador="Motorista",
+            perfil=PerfilOperador.FUNCIONARIO,
+            ativo=True,
+        )
+    )
+    db_session.commit()
+
+    response = WhatsappRouterAgent(db_session).handle(text_message("1", telefone=telefone))
+
+    assert "permiss" in response.lower()
+    assert "Cadastro de pedido iniciado" not in response

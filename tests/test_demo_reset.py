@@ -1,4 +1,4 @@
-from app.models.aluguer import StatusAluguer
+﻿from app.models.aluguer import StatusAluguer
 from app.models.contentor import Contentor, StatusContentor
 from app.models.conversa import ConversaWhatsApp
 from app.services.aluguer_service import AluguerService
@@ -15,13 +15,15 @@ def test_reset_recoloca_contentores_como_disponivel(db_session):
         forma_pagamento="transferencia",
         pago=True,
     )
-    db_session.add(ConversaWhatsApp(telefone="556198266551", estado_atual="confirmado", contexto_json={}))
+    db_session.add(ConversaWhatsApp(telefone="351900000001", estado_atual="confirmado", contexto_json={}))
     db_session.commit()
 
     assert aluguer.contentor.status == StatusContentor.ALUGADO
 
     result = DemoResetService(db_session).reset()
-    contentores = db_session.query(Contentor).filter(Contentor.codigo.in_([f"C{index:02d}" for index in range(1, 21)])).all()
+    contentores = db_session.query(Contentor).filter(
+        Contentor.codigo.in_([str(index) for index in range(1, 21)])
+    ).all()
 
     assert result["alugueres_removidos"] == 1
     assert result["conversas_removidas"] == 1

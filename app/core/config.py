@@ -4,17 +4,28 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    app_name: str = "OLT Entulhos"
+    app_name: str = "OLT Gestão de Resíduos & Demolições"
     env: str = "development"
 
     database_url: str = "sqlite:///./olt_entulhos.db"
     media_dir: str = "./media"
 
+    # Token exigido no cabeçalho X-Dashboard-Token de /dashboard/*; vazio desliga.
+    dashboard_token: str = ""
+
     whatsapp_verify_token: str = "troque_este_token"
+    whatsapp_app_secret: str = ""
     whatsapp_access_token: str = ""
     whatsapp_phone_number_id: str = ""
     whatsapp_business_account_id: str = ""
     whatsapp_api_version: str = "v25.0"
+    whatsapp_outbox_min_recipient_interval_seconds: float = 1.0
+    whatsapp_outbox_max_attempts: int = 5
+    whatsapp_outbox_backoff_base_seconds: float = 30.0
+    whatsapp_outbox_backoff_max_seconds: float = 900.0
+    whatsapp_outbox_lease_seconds: float = 60.0
+    whatsapp_outbox_worker_interval_seconds: float = 1.0
+    whatsapp_outbox_sent_retention_days: int = 30
 
     owner_name: str = "Lucas"
     owner_whatsapp: str = ""
@@ -23,12 +34,22 @@ class Settings(BaseSettings):
     authorized_operator_phone: str = ""
     authorized_operator_phones: str = ""
     timezone: str = "Europe/Lisbon"
+    # Fluxo V24 sem avanço há mais que isto é encerrado na próxima mensagem.
+    fluxo_timeout_minutos: int = 120
+    feature_avarias_enabled: bool = True
+    feature_contentores_enabled: bool = True
+    feature_carrinhas_enabled: bool = True
 
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
         extra="ignore",
     )
+
+
+def require_whatsapp_app_secret_in_production(settings: Settings) -> None:
+    if settings.env.strip().lower() in {"prod", "production"} and not settings.whatsapp_app_secret.strip():
+        raise RuntimeError("WHATSAPP_APP_SECRET is required when ENV=production")
 
 
 @lru_cache

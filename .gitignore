@@ -1,6 +1,11 @@
 ﻿__pycache__/
 *.py[cod]
+*.pyc
+.test_tmp/
 .pytest_cache/
+.pytest_tmp/
+.pytest_tmp_cancel/
+.pytest_tmp_final/
 .venv/
 venv/
 .env
@@ -10,4 +15,5 @@ venv/
 htmlcov/
 .coverage
 media/
+backups/
 .env.backup_*

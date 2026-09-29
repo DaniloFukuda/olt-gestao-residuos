@@ -1,7 +1,7 @@
 param(
     [string]$BaseUrl = "http://127.0.0.1:8000",
-    [string]$From = "556198266551",
-    [string]$ProfileName = "Danilo Fukuda",
+    [string]$From = "351900000001",
+    [string]$ProfileName = "Operador Teste",
     [switch]$AllowRealSend
 )
 
@@ -11,9 +11,9 @@ $ProjectRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 Set-Location $ProjectRoot
 
 $WebhookUrl = ($BaseUrl.Trim().TrimEnd("/")) + "/webhook/whatsapp"
-$WabaId = "1502228507690349"
-$DisplayPhoneNumber = "556196870361"
-$PhoneNumberId = "1148807428322172"
+$WabaId = "100000000000001"
+$DisplayPhoneNumber = "351900000002"
+$PhoneNumberId = "100000000000002"
 
 Write-Host "ATENCAO: este script envia payloads fake para o webhook local."
 Write-Host "Por padrao, ele envia o header X-OLT-Mock-Whatsapp=true para evitar envio real."

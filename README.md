@@ -1,61 +1,64 @@
-# OLT — Gestão Operacional de Contentores
+# OLT — Gestão Operacional de Contentores e Carrinhas
 
-Sistema de gestão operacional para contentores e alugueres, com automação conversacional via WhatsApp Cloud API e uma API FastAPI para consulta de estado operacional.
+Sistema de gestão operacional de uma pequena empresa de resíduos e demolições em Portugal. Toda a operação acontece por conversa no WhatsApp (WhatsApp Cloud API); a API FastAPI recebe o webhook, guarda o estado de cada conversa e aplica as regras de negócio.
 
-O projeto organiza o ciclo de aluguer de contentores: disponibilidade, entrega, localização, dados de contacto, valor, pagamento, vencimento, recolha e lembretes. As regras de domínio permanecem independentes da integração de mensageria para permitir validação local e testes automatizados.
+O sistema cobre dois serviços:
+
+- **Contentores:** pedido → entrega (adesivo do contentor, fotos, localização) → recolha → despejo no vazadouro. Prazo de aluguer de 5 dias.
+- **Carrinhas:** pedido → chegada ao cliente → partida (prevista para 2 horas depois da chegada) → despejo.
 
 ## Funcionalidades
 
-- **Operação via WhatsApp:** webhook de verificação e recebimento compatível com WhatsApp Cloud API.
-- **Registo de aluguer:** início de aluguer, foto de entrega, localização GPS, contacto do cliente, valor, estado de pagamento e forma de pagamento.
-- **Gestão de contentores:** catálogo inicial, disponibilidade, alugados, manutenção e aguardando recolha.
-- **Entrega e recolha:** eventos persistidos de entrega e marcação de recolha.
-- **GPS/localização:** o fluxo exige coordenadas de localização antes da confirmação do aluguer.
-- **Autorização de operadores:** números autorizados podem ser configurados por variável de ambiente; entradas não autorizadas são bloqueadas quando a política está ativa.
-- **Resumos operacionais:** comandos para totais, disponibilidade, alugueres ativos, vencimentos e atrasos.
-- **Pagamentos:** registo de pago/pendente e forma de pagamento no aluguer.
-- **Painel API:** endpoints para contentores, vencimentos de amanhã e lembretes.
-- **Testes automatizados:** cobertura de domínio, fluxo WhatsApp, webhook, autorização, migrações e API.
+- **Menu V4 no WhatsApp:** 1. Novo Pedido · 2. Confirmar Chegada/Entrega · 3. Confirmar Recolha/Partida · 4. Confirmar Despejo · 5. Painel de Controle.
+- **Pedidos com vários equipamentos:** um pedido pode ter vários contentores e/ou carrinhas, cada um com resíduo contratado (Entulho Limpo ou Entulho Misto), data planejada e valor global.
+- **Pagamentos:** pago na criação ou pendente; recebimento na entrega regista forma, data e operador.
+- **Pendências:** pagamento pendente, avaria (com fotos) e carga divergente no despejo, com revisão e resolução pelo gestor.
+- **Painel operacional:** ações de hoje, recolhas do dia, atrasos, carrinhas em atendimento, pendências e resumo financeiro.
+- **Frota:** a entrega só aceita contentor cadastrado e disponível; o ciclo atualiza o estado (alugado → disponível ou manutenção). O gestor cadastra números novos com `cadastrar contentor N`.
+- **Perfis:** GESTOR (tudo) e FUNCIONARIO (operação de campo), a partir da tabela `operadores`.
+- **Webhook robusto:** assinatura da Meta (`X-Hub-Signature-256`), deduplicação por `message_id` e fila por telefone para mensagens concorrentes.
+- **Testes automatizados:** domínio, fluxos conversacionais, webhook, migrações e cenários de sistema de ponta a ponta.
 
 ## Arquitetura
 
 ```text
 WhatsApp Cloud API
+       │  POST /webhook/whatsapp (assinado)
+Webhook FastAPI ── dedup (mensagens_webhook) ── fila por telefone
        │
-Webhook FastAPI ── Parser ── Router de conversa
-       │                         │
-       │                    Agentes de fluxo
-       │                         │
-       └────────── Serviços de domínio ──────────┐
-                                                   │
-                                      SQLite + SQLAlchemy
+WhatsappRouterAgent ── PedidoV24OperationalRouter ── agentes de fluxo (app/agents/pedido_v24/)
+       │                                              └─ backend legado PedidoV24Agent
+Serviços de domínio (PedidoService, ContentorService, OperadorService…)
+       │
+SQLite + SQLAlchemy
 ```
-
-### Componentes
 
 | Camada | Responsabilidade |
 |---|---|
 | `app/routes/` | Webhook WhatsApp, health check e endpoints de painel |
-| `app/agents/` | Fluxos de aluguer, localização, recolha, renovação e lembretes |
-| `app/services/` | Regras de contentor, aluguer, notificações, seeds e lembretes |
+| `app/agents/` | Roteador de conversa e fluxos (cadastro, entrega, recolha, despejo, pendências) |
+| `app/services/` | Regras de pedido, frota, operadores, deduplicação, fila e outbox |
 | `app/models/` | Entidades persistidas e estados operacionais |
-| `app/integrations/whatsapp/` | Parser de payloads e cliente da WhatsApp Cloud API |
-| `tests/` | Testes automatizados de regras, integração e regressões |
+| `app/integrations/whatsapp/` | Parser de payloads e cliente da Cloud API (botões e listas interativas) |
+| `tests/` | Testes unitários, de fluxo e `tests/system/` (ponta a ponta via webhook) |
+
+Notas para quem for mexer no código estão em [`AGENTS.md`](AGENTS.md); pendências conhecidas em [`PENDENCIAS.md`](PENDENCIAS.md).
 
 ## Stack
 
-- Python
+- Python 3.11+
 - FastAPI e Uvicorn
-- SQLite e SQLAlchemy
+- SQLite e SQLAlchemy 2
 - WhatsApp Cloud API
 - Pydantic Settings
 - Pytest e HTTPX
 
-## API e operação local
+## Operação local
 
 ```bash
 python -m venv .venv
-source .venv/Scripts/activate  # Git Bash no Windows
+source .venv/bin/activate        # Linux/macOS
+# .venv\Scripts\activate         # Windows
 python -m pip install -r requirements.txt
 python -m uvicorn app.main:app --reload
 ```
@@ -65,44 +68,50 @@ A API fica disponível em `http://127.0.0.1:8000`.
 Endpoints principais:
 
 - `GET /health`
-- `GET /webhook/whatsapp` — verificação do webhook
-- `POST /webhook/whatsapp` — recebimento de eventos
+- `GET /webhook/whatsapp` — verificação do webhook pela Meta
+- `POST /webhook/whatsapp` — recebimento de mensagens
 - `GET /dashboard/contentores`
 - `GET /dashboard/alugueres/vencendo-amanha`
 - `GET /dashboard/lembretes`
 
-## Configuração segura
+Os endpoints `/dashboard/*` devolvem dados de clientes e exigem o cabeçalho `X-Dashboard-Token` igual a `DASHBOARD_TOKEN`; sem `DASHBOARD_TOKEN` configurado respondem 404.
 
-Crie um `.env` local a partir de `.env.example`. Use apenas valores de demonstração na documentação e mantenha credenciais reais fora do Git.
+## Configuração
 
-Principais grupos de configuração:
+Crie um `.env` a partir de `.env.example`. Variáveis principais:
 
-- URL do banco SQLite;
-- token de verificação e credenciais da WhatsApp Cloud API;
-- identificador do número da Cloud API;
-- política de operadores autorizados;
-- ambiente de execução.
+| Variável | Uso |
+|---|---|
+| `DATABASE_URL` | Banco SQLite |
+| `WHATSAPP_VERIFY_TOKEN` | Token de verificação do webhook (GET da Meta) |
+| `WHATSAPP_APP_SECRET` | App Secret da Meta. É **obrigatório** com `ENV=production`: a aplicação não inicia sem ele. O webhook também rejeita a configuração inválida antes de processar mensagens. Com o segredo, exige assinatura Meta válida. |
+| `WHATSAPP_ACCESS_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID` | Credenciais de envio da Cloud API |
+| `DASHBOARD_TOKEN` | Token dos endpoints `/dashboard/*` (vazio = desligados) |
+| `AUTHORIZED_OPERATOR_PHONES` | Telefones com acesso de gestor quando a tabela `operadores` está vazia (fallback) |
+| `FLUXO_TIMEOUT_MINUTOS` | Minutos até um fluxo abandonado expirar (padrão 120) |
+| `FEATURE_CONTENTORES_ENABLED`, `FEATURE_CARRINHAS_ENABLED`, `FEATURE_AVARIAS_ENABLED` | Liga/desliga serviços |
+| `ENV` | `test` força o envio em modo simulado |
 
-Quando as credenciais da Cloud API não estão configuradas, ou quando `ENV=test`, o cliente de envio trabalha em modo seguro de simulação. Nunca use números, tokens ou IDs reais em fixtures, exemplos ou commits.
+Quando as credenciais da Cloud API não estão configuradas, ou quando `ENV=test`, o cliente de envio trabalha em modo simulado. Nunca use números, tokens ou IDs reais em fixtures, exemplos ou commits.
 
-## Fluxo operacional resumido
+Para cadastrar gestores iniciais:
 
-1. Um operador autorizado inicia o registo de um aluguer.
-2. O sistema coleta foto de entrega e localização GPS.
-3. São registados os dados de contacto, valor, situação e forma de pagamento.
-4. O contentor passa ao estado de alugado e recebe vencimento calculado.
-5. A operação pode ser acompanhada por resumo, listas, vencimentos, atrasos e marcação de recolha.
+```bash
+python scripts/cadastrar_gestores_lucas_secretario.py 351900000001:Lucas 351900000002:Secretario
+# ou OLT_GESTORES="351900000001:Lucas;351900000002:Secretario"
+```
 
 ## Testes
 
 ```bash
-python -m pytest -q
+python -m pytest -q                 # suíte completa
+python -m pytest -q tests/system    # cenários de ponta a ponta via webhook
 ```
 
 ## Segurança e privacidade
 
-O repositório não deve conter `.env`, tokens, chaves privadas, bancos locais, uploads, fotografias, documentos ou dados pessoais reais. Antes de publicar alterações, revise os arquivos staged e execute a suíte de testes.
+O repositório não deve conter `.env`, tokens, chaves privadas, bancos locais, uploads, fotografias ou dados pessoais reais (RGPD). Antes de publicar alterações, revise os arquivos staged e execute a suíte de testes.
 
 ## Deploy
 
-A aplicação é uma API ASGI e pode ser executada com Uvicorn atrás de um proxy reverso no ambiente controlado. Configurações de infraestrutura, credenciais e dados operacionais devem permanecer fora do repositório público.
+A aplicação é uma API ASGI e pode ser executada com Uvicorn atrás de um proxy reverso. Em produção, configure `WHATSAPP_APP_SECRET`: sem ele, o processo não inicia. O webhook ainda rejeita a configuração inválida antes de processar mensagens. Com o segredo configurado, somente requisições com `X-Hub-Signature-256` válida da Meta são aceitas. Configurações de infraestrutura, credenciais e dados operacionais ficam fora do repositório.

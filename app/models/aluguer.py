@@ -16,6 +16,22 @@ class StatusAluguer(StrEnum):
     CANCELADO = "cancelado"
 
 
+class StatusEntrega(StrEnum):
+    PENDENTE = "PENDENTE"
+    ENTREGUE = "ENTREGUE"
+
+
+class StatusCiclo(StrEnum):
+    EM_ANDAMENTO = "EM_ANDAMENTO"
+    RECOLHIDO = "RECOLHIDO"
+
+
+class StatusResolucao(StrEnum):
+    NAO_APLICA = "N/A"
+    PENDENTE = "PENDENTE"
+    RESOLVIDO = "RESOLVIDO"
+
+
 class AluguerContentor(Base):
     __tablename__ = "alugueres_contentor"
 
@@ -24,15 +40,56 @@ class AluguerContentor(Base):
     cliente_id: Mapped[int] = mapped_column(ForeignKey("clientes.id"), nullable=False)
     telefone_cliente: Mapped[str] = mapped_column(String(50), nullable=False)
     nome_cliente: Mapped[str] = mapped_column(String(255), nullable=False)
+    email_cliente: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    numero_contentor: Mapped[str] = mapped_column(String(20), nullable=False)
     data_entrega: Mapped[DateTime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
     data_vencimento: Mapped[DateTime] = mapped_column(DateTime(timezone=True), nullable=False)
+    tipo_residuo: Mapped[str | None] = mapped_column(String(80), nullable=True)
     valor: Mapped[float] = mapped_column(Numeric(10, 2), nullable=False)
     forma_pagamento: Mapped[str | None] = mapped_column(String(80), nullable=True)
     pago: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    operador_telefone: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    criado_por_operador: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    pedido_feito_por: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    entrega_feita_por: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    alterado_por_operador: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    excluido_por_operador: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    is_deleted: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    justificativa_exclusao: Mapped[str | None] = mapped_column(Text, nullable=True)
+    id_fatura_fiscal: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    google_event_entrega_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    google_event_retirada_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    status_ciclo_cliente: Mapped[str] = mapped_column(String(80), default="EM_ANDAMENTO", nullable=False)
+    status_entrega: Mapped[str] = mapped_column(String(20), default=StatusEntrega.ENTREGUE.value, nullable=False)
+    status_ciclo: Mapped[str] = mapped_column(String(20), default=StatusCiclo.EM_ANDAMENTO.value, nullable=False)
     status: Mapped[StatusAluguer] = mapped_column(Enum(StatusAluguer), default=StatusAluguer.ATIVO, nullable=False)
     foto_entrega_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
     latitude: Mapped[float | None] = mapped_column(Float, nullable=True)
     longitude: Mapped[float | None] = mapped_column(Float, nullable=True)
+    pedido_endereco_tipo: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    pedido_endereco_texto: Mapped[str | None] = mapped_column(Text, nullable=True)
+    pedido_latitude: Mapped[float | None] = mapped_column(Float, nullable=True)
+    pedido_longitude: Mapped[float | None] = mapped_column(Float, nullable=True)
+    pedido_ponto_referencia: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    entrega_latitude: Mapped[float | None] = mapped_column(Float, nullable=True)
+    entrega_longitude: Mapped[float | None] = mapped_column(Float, nullable=True)
+    entrega_ponto_referencia: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    recolha_feita_por: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    recolha_data_hora: Mapped[DateTime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    carga_errada: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    relato_carga: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status_resolucao_carga: Mapped[str] = mapped_column(
+        String(20),
+        default=StatusResolucao.NAO_APLICA.value,
+        nullable=False,
+    )
+    contentor_avariado: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    relato_avaria: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status_resolucao_avaria: Mapped[str] = mapped_column(
+        String(20),
+        default=StatusResolucao.NAO_APLICA.value,
+        nullable=False,
+    )
     observacoes: Mapped[str | None] = mapped_column(Text, nullable=True)
     criado_em: Mapped[DateTime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
     atualizado_em: Mapped[DateTime] = mapped_column(
@@ -45,6 +102,8 @@ class AluguerContentor(Base):
     cliente = relationship("Cliente", back_populates="alugueres")
     contentor = relationship("Contentor", back_populates="alugueres")
     eventos = relationship("EventoAluguer", back_populates="aluguer")
+    fotos = relationship("ContentorFoto", back_populates="aluguer")
+    fotos_recolha = relationship("ContentorFotoRecolha", back_populates="aluguer")
 
 
 class EventoAluguer(Base):
@@ -57,3 +116,32 @@ class EventoAluguer(Base):
     criado_em: Mapped[DateTime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
 
     aluguer = relationship("AluguerContentor", back_populates="eventos")
+
+
+class ContentorFoto(Base):
+    __tablename__ = "contentor_fotos"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    aluguer_id: Mapped[int | None] = mapped_column(ForeignKey("alugueres_contentor.id"), nullable=True)
+    pedido_contentor_id: Mapped[int | None] = mapped_column(
+        ForeignKey("pedido_contentores.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    url_foto: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    url_midia: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    tipo: Mapped[str | None] = mapped_column(String(30), default="entrega", nullable=True)
+    tipo_foto: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    criado_em: Mapped[DateTime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+
+    aluguer = relationship("AluguerContentor", back_populates="fotos")
+    pedido_contentor = relationship("PedidoContentor", back_populates="fotos")
+
+
+class ContentorFotoRecolha(Base):
+    __tablename__ = "contentor_fotos_recolha"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    aluguer_id: Mapped[int] = mapped_column(ForeignKey("alugueres_contentor.id"), nullable=False)
+    url_foto_recolha: Mapped[str] = mapped_column(String(500), nullable=False)
+    criado_em: Mapped[DateTime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+
+    aluguer = relationship("AluguerContentor", back_populates="fotos_recolha")
