@@ -567,8 +567,11 @@ def test_cadastro_contentor_data_manual_invalida_preserva_mensagem(value):
     ) == "Data inválida. Use o formato DD/MM/AAAA."
 
 
-@pytest.mark.parametrize("value,expected", [("12,50", "12.5"), ("0", "0.0"), ("-1", "-1.0")])
-def test_cadastro_contentor_valor_preserva_float_do_contexto(value, expected):
+@pytest.mark.parametrize(
+    "value,expected",
+    [("12,50", "12.50"), ("0", "0.00"), ("450€", "450.00"), ("1.234,50", "1234.50")],
+)
+def test_cadastro_contentor_valor_normaliza_decimal_do_contexto(value, expected):
     decision = ContentorCadastroAgent().decide_valor(
         _contentor_proven_context(),
         _cadastro_message(value),
@@ -578,10 +581,11 @@ def test_cadastro_contentor_valor_preserva_float_do_contexto(value, expected):
     assert decision.context["valor"] == expected
 
 
-def test_cadastro_contentor_valor_invalido_preserva_mensagem():
+@pytest.mark.parametrize("value", ["invalido", "-1", "nan", "inf", "1e12"])
+def test_cadastro_contentor_valor_invalido_preserva_mensagem(value):
     assert ContentorCadastroAgent().decide_valor(
         _contentor_proven_context(),
-        _cadastro_message("invalido"),
+        _cadastro_message(value),
     ) == "Valor inválido."
 
 
@@ -773,7 +777,7 @@ def test_router_confirmar_contentor_usa_boundary_especifico(db_session, choice):
         ("quantidade", "2", "quantidade", 2),
         ("nome_cliente", " Novo Nome ", "nome", "Novo Nome"),
         ("telefone", "912 345 678", "telefone", "912345678"),
-        ("valor_total", "12,50", "valor", "12.5"),
+        ("valor_total", "12,50", "valor", "12.50"),
         ("mao_de_obra", "1", "precisa_mao_de_obra", True),
         ("tipo_residuo", "2", "residuos", ["Entulho Misto"]),
     ],

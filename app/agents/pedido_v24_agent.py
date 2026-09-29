@@ -14,6 +14,7 @@ from app.agents.pedido_v24.contentor_cadastro import (
 )
 from app.integrations.whatsapp.parser import NormalizedWhatsAppMessage
 from app.core.config import get_settings
+from app.core.money import VALOR_INVALIDO_MESSAGE, parse_valor_monetario
 from app.models.conversa import ConversaWhatsApp
 from app.models.pedido import (
     Pedido,
@@ -338,10 +339,10 @@ class PedidoV24Agent:
                 return self._residuo_prompt(ctx)
             return self._registrar_item_cadastro(conversa, ctx, residue)
         if state == "v24_cadastro_valor":
-            try:
-                ctx["valor"] = str(float(raw.replace(",", ".")))
-            except ValueError:
-                return "Valor inválido."
+            valor = parse_valor_monetario(raw)
+            if valor is None:
+                return VALOR_INVALIDO_MESSAGE
+            ctx["valor"] = str(valor)
             return self._advance(
                 conversa,
                 "v24_cadastro_pago",
@@ -2108,6 +2109,13 @@ class PedidoV24Agent:
             )
             self._aplicar_idle(conversa)
             self.db.commit()
+        except ValueError as exc:
+            # O rollback devolve a conversa à confirmação; o operador pode corrigir.
+            self.db.rollback()
+            return (
+                f"⚠️ Não foi possível criar o pedido: {exc}\n\n"
+                "Escolha 2 para corrigir os dados ou 3 para cancelar."
+            )
         except Exception:
             self.db.rollback()
             raise
@@ -2325,10 +2333,10 @@ class PedidoV24Agent:
                 return self._mao_obra_prompt()
             ctx["precisa_mao_de_obra"] = mao_obra
         elif field == "valor_total":
-            try:
-                ctx["valor"] = str(float(str(value).replace(",", ".")))
-            except ValueError:
-                return "Valor inválido."
+            valor = parse_valor_monetario(str(value))
+            if valor is None:
+                return VALOR_INVALIDO_MESSAGE
+            ctx["valor"] = str(valor)
         elif field == "status_pagamento":
             if value in {"1", "sim", "sim, ja esta pago"}:
                 ctx["pago"] = True

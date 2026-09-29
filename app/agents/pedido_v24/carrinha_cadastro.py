@@ -8,6 +8,7 @@ from enum import Enum
 from typing import Any
 
 from app.agents.pedido_v24.transitions import AdvanceTransition, IdleTransition
+from app.core.money import VALOR_INVALIDO_MESSAGE, parse_valor_monetario
 from app.models.pedido import TipoEquipamentoPedido
 
 
@@ -154,12 +155,11 @@ class CarrinhaCadastroAgent:
         return AdvanceTransition("v24_cadastro_valor", ctx, "Qual é o valor comercial total?")
 
     def decide_valor(self, context, message):
-        try:
-            value = str(float((message.texto or "").strip().replace(",", ".")))
-        except ValueError:
-            return "Valor inválido."
+        valor = parse_valor_monetario(message.texto)
+        if valor is None:
+            return VALOR_INVALIDO_MESSAGE
         ctx = dict(context or {})
-        ctx["valor"] = value
+        ctx["valor"] = str(valor)
         return AdvanceTransition("v24_cadastro_pago", ctx, "O pedido já está pago?\n\n1. Sim, já está pago\n2. Não, pendente")
 
     def decide_pago(self, context, message):
@@ -280,8 +280,9 @@ class CarrinhaCadastroAgent:
             if value is None: return self._mao_obra_prompt()
             ctx["precisa_mao_de_obra"] = value
         elif field == "valor_total":
-            try: ctx["valor"] = str(float(raw.replace(",", ".")))
-            except ValueError: return "Valor inválido."
+            valor = parse_valor_monetario(raw)
+            if valor is None: return VALOR_INVALIDO_MESSAGE
+            ctx["valor"] = str(valor)
         elif field == "status_pagamento":
             if choice in {"1", "sim", "sim, ja esta pago"}:
                 ctx.update({"pago": True, "editing_field": "forma_pagamento"})

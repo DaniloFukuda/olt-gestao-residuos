@@ -2956,3 +2956,60 @@ def test_resumo_v4_cabecalho_usa_data_operacional_de_portugal(db_session, monkey
 
     assert "📊 *PAINEL DE CONTROLE OPERACIONAL OLT*" in response
     assert "📅 Data: 14/07/2026" in response
+
+
+CARRINHA_ATE_VALOR = [
+    "novo pedido", "carrinha", "1", "Cliente Valor", "351912345678",
+    "Hoje", "09:30", "limpo", "Sim, com pessoal",
+]
+CONTENTOR_ATE_VALOR = [
+    "novo pedido", "contentor", "Cliente Valor", "351912345678", "1", "2", "2", "Hoje",
+]
+
+
+@pytest.mark.parametrize("steps", [CARRINHA_ATE_VALOR, CONTENTOR_ATE_VALOR], ids=["carrinha", "contentor"])
+@pytest.mark.parametrize("valor", ["-50", "nan", "inf", "1e12", "1.234"])
+def test_cadastro_v24_rejeita_valor_negativo_nao_finito_ou_ambiguo(db_session, monkeypatch, steps, valor):
+    liberar_operadores(monkeypatch)
+    router = WhatsappRouterAgent(db_session)
+    for text in steps:
+        router.handle(msg(text))
+
+    response = router.handle(msg(valor))
+    conversa = db_session.query(ConversaWhatsApp).one()
+
+    assert response == "Valor inválido."
+    assert conversa.estado_atual == "v24_cadastro_valor"
+
+
+@pytest.mark.parametrize("steps", [CARRINHA_ATE_VALOR, CONTENTOR_ATE_VALOR], ids=["carrinha", "contentor"])
+def test_cadastro_v24_aceita_valor_com_euro_e_separador_de_milhar(db_session, monkeypatch, steps):
+    liberar_operadores(monkeypatch)
+    router = WhatsappRouterAgent(db_session)
+    for text in [*steps, "1.234,50 €", "Não, pendente", "Rua", "Não"]:
+        response = router.handle(msg(text))
+    assert "Valor total: 1.234,50 €" in response
+
+    router.handle(msg("1"))
+
+    assert str(db_session.query(Pedido).one().valor_global) == "1234.50"
+
+
+def test_cadastro_v24_erro_de_validacao_no_servico_responde_e_preserva_confirmacao(db_session, monkeypatch):
+    liberar_operadores(monkeypatch)
+    router = WhatsappRouterAgent(db_session)
+    for text in [*CONTENTOR_ATE_VALOR, "120", "Não, pendente", "Rua", "Não"]:
+        router.handle(msg(text))
+    conversa = db_session.query(ConversaWhatsApp).one()
+    contexto = dict(conversa.contexto_json)
+    contexto["endereco"] = "x" * 301
+    conversa.contexto_json = contexto
+    db_session.commit()
+
+    response = router.handle(msg("1"))
+    db_session.expire_all()
+
+    assert response.startswith("⚠️ Não foi possível criar o pedido:")
+    assert "300 caracteres" in response
+    assert db_session.query(ConversaWhatsApp).one().estado_atual == "v24_cadastro_confirmacao"
+    assert db_session.query(Pedido).count() == 0

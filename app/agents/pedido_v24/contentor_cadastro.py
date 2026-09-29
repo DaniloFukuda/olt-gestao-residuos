@@ -8,6 +8,7 @@ from enum import Enum
 from typing import Any
 
 from app.agents.pedido_v24.transitions import AdvanceTransition, IdleTransition
+from app.core.money import VALOR_INVALIDO_MESSAGE, parse_valor_monetario
 from app.integrations.whatsapp.parser import NormalizedWhatsAppMessage
 from app.models.pedido import TipoEquipamentoPedido
 
@@ -289,13 +290,11 @@ class ContentorCadastroAgent:
         )
 
     def decide_valor(self, context, message: NormalizedWhatsAppMessage):
-        raw = (message.texto or "").strip()
-        try:
-            valor = str(float(raw.replace(",", ".")))
-        except ValueError:
-            return "Valor inválido."
+        valor = parse_valor_monetario(message.texto)
+        if valor is None:
+            return VALOR_INVALIDO_MESSAGE
         ctx = dict(context or {})
-        ctx["valor"] = valor
+        ctx["valor"] = str(valor)
         return AdvanceTransition(
             "v24_cadastro_pago",
             ctx,
@@ -476,10 +475,10 @@ class ContentorCadastroAgent:
                 return self._mao_obra_prompt()
             ctx["precisa_mao_de_obra"] = mao_obra
         elif field == "valor_total":
-            try:
-                ctx["valor"] = str(float(raw.replace(",", ".")))
-            except ValueError:
-                return "Valor inválido."
+            valor = parse_valor_monetario(raw)
+            if valor is None:
+                return VALOR_INVALIDO_MESSAGE
+            ctx["valor"] = str(valor)
         elif field == "status_pagamento":
             if choice in {"1", "sim", "sim, ja esta pago"}:
                 ctx["pago"] = True
