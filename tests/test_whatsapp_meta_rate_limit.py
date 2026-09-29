@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+import hashlib
+import hmac
+import json
 from pathlib import Path
 from typing import Any
 
@@ -64,6 +67,7 @@ def whatsapp_cloud_env(monkeypatch: pytest.MonkeyPatch):
     get_settings.cache_clear()
     monkeypatch.setenv("ENV", "production")
     monkeypatch.setenv("WHATSAPP_ACCESS_TOKEN", "fake-token")
+    monkeypatch.setenv("WHATSAPP_APP_SECRET", "fake-app-secret")
     monkeypatch.setenv("WHATSAPP_PHONE_NUMBER_ID", "fake-phone-number-id")
     monkeypatch.setenv("WHATSAPP_API_VERSION", "v25.0")
     yield
@@ -477,7 +481,13 @@ def test_webhook_local_primeiro_envio_sucesso_segundo_131056_mesmo_evento(
         ],
     }
 
-    response = TestClient(app).post("/webhook/whatsapp", json=payload)
+    body = json.dumps(payload).encode("utf-8")
+    signature = "sha256=" + hmac.new(b"fake-app-secret", body, hashlib.sha256).hexdigest()
+    response = TestClient(app).post(
+        "/webhook/whatsapp",
+        content=body,
+        headers={"content-type": "application/json", "X-Hub-Signature-256": signature},
+    )
 
     # O webhook do módulo 3 devolve contadores; o segundo envio (menu) falhou
     # com 131056 e não houve fallback textual (só duas chamadas à Meta).

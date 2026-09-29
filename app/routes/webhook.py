@@ -7,7 +7,7 @@ from fastapi.responses import PlainTextResponse
 from sqlalchemy.orm import Session
 
 from app.agents.whatsapp_router_agent import WhatsappRouterAgent
-from app.core.config import get_settings
+from app.core.config import get_settings, require_whatsapp_app_secret_in_production
 from app.core.db import get_db
 from app.integrations.whatsapp.client import send_whatsapp_message
 from app.integrations.whatsapp.parser import parse_whatsapp_payload
@@ -36,7 +36,12 @@ async def _assinatura_meta_validada(request: Request) -> bool:
     operador autorizado apenas informando o telefone no payload.
     """
     global _aviso_assinatura_emitido
-    app_secret = get_settings().whatsapp_app_secret.strip()
+    settings = get_settings()
+    try:
+        require_whatsapp_app_secret_in_production(settings)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail="Webhook signature verification unavailable") from exc
+    app_secret = settings.whatsapp_app_secret.strip()
     if not app_secret:
         if not _aviso_assinatura_emitido:
             logger.warning("WHATSAPP_APP_SECRET ausente: assinatura da Meta não é verificada")

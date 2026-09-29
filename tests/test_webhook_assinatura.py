@@ -5,7 +5,7 @@ import json
 import pytest
 from fastapi.testclient import TestClient
 
-from app.core.config import get_settings
+from app.core.config import Settings, get_settings
 from app.routes import webhook
 
 APP_SECRET = "segredo-de-teste"
@@ -120,6 +120,26 @@ def test_sem_app_secret_mantem_compatibilidade_e_cabecalho_de_mock(client, envio
 
     assert response.status_code == 200
     assert envios == [("351900000000", "resposta", True)]
+
+
+def test_producao_sem_app_secret_rejeita_webhook(client, envios, monkeypatch):
+    monkeypatch.setattr(webhook, "get_settings", lambda: Settings(env="production"))
+
+    response = _post(client, _corpo(), **{"X-OLT-Mock-Whatsapp": "true"})
+
+    assert response.status_code == 503
+    assert RouterEco.calls == []
+    assert envios == []
+
+
+@pytest.mark.parametrize("environment", ["prod", "production"])
+def test_producao_sem_app_secret_impede_inicializacao(monkeypatch, environment):
+    from app import main
+
+    monkeypatch.setattr(main, "get_settings", lambda: Settings(env=environment, whatsapp_app_secret="   "))
+
+    with pytest.raises(RuntimeError, match="WHATSAPP_APP_SECRET"):
+        main.create_app()
 
 
 def test_falha_no_roteador_avisa_o_operador_em_vez_de_silencio(client, envios, monkeypatch):

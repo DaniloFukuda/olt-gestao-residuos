@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 
+from app.core.config import get_settings, require_whatsapp_app_secret_in_production
 from app.core.db import Base, SessionLocal, engine
 from app.core.schema_migrations import ensure_alugueres_contentor_schema
 from app.models import pedido as _pedido_models  # noqa: F401
@@ -8,6 +9,7 @@ from app.services.seed_service import SeedService
 
 
 def create_app() -> FastAPI:
+    require_whatsapp_app_secret_in_production(get_settings())
     Base.metadata.create_all(bind=engine)
     ensure_alugueres_contentor_schema(engine)
     with SessionLocal() as db:

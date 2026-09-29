@@ -7,11 +7,14 @@ suíte completa verde (1621 testes) e teste de ponta a ponta com 22 pedidos.
 
 ## 1. Ao aceitar o PR (servidor de produção)
 
-1. **Preencher `WHATSAPP_APP_SECRET`** no `.env` (Meta → App → Configurações →
-   Básico → Chave secreta). Sem ele, qualquer pessoa que conheça a URL do
-   webhook consegue enviar mensagens como se fosse um operador.
+1. **Preencher `WHATSAPP_APP_SECRET` e validar uma assinatura Meta** no `.env`
+   (Meta → App → Configurações → Básico → Chave secreta). Com `ENV=production`,
+   a aplicação agora recusa iniciar sem o segredo; o webhook também rejeita a
+   configuração inválida antes de processar mensagens.
 2. **Trocar o verify token do webhook** (`WHATSAPP_VERIFY_TOKEN`) no `.env` e
-   no painel da Meta: o valor antigo esteve público no repositório.
+   no painel da Meta: o valor antigo esteve público no repositório. Rotacione
+   também qualquer credencial que possa ter coexistido no histórico, sem
+   reproduzir os valores em tickets, logs ou commits.
 3. Se alguém usa `GET /dashboard/*`, definir `DASHBOARD_TOKEN` e enviar o
    cabeçalho `X-Dashboard-Token`. Sem isso os endpoints respondem 404.
 4. Conferir a frota: a tabela `contentores` é semeada com 1–20. Números em uso
@@ -26,8 +29,10 @@ suíte completa verde (1621 testes) e teste de ponta a ponta com 22 pedidos.
 ## 2. Depois do merge
 
 1. Apagar os branches antigos (todos estão contidos no `main` após o merge).
-2. Avaliar tornar o repositório privado: o histórico do git ainda contém os
-   telefones, IDs da Meta e o verify token removidos do código.
+2. Avaliar tornar o repositório privado ou produzir um mirror saneado: o
+   histórico do git ainda contém telefones, IDs da Meta e o verify token
+   removidos do código. Não reescreva histórico sem um plano aprovado, backup
+   verificável e rotação prévia das credenciais.
 
 ## 3. Decisões de negócio em aberto (perguntar aos sócios)
 

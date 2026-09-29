@@ -84,7 +84,7 @@ Crie um `.env` a partir de `.env.example`. Variáveis principais:
 |---|---|
 | `DATABASE_URL` | Banco SQLite |
 | `WHATSAPP_VERIFY_TOKEN` | Token de verificação do webhook (GET da Meta) |
-| `WHATSAPP_APP_SECRET` | App Secret da Meta. Com ele preenchido o webhook exige assinatura válida. **Preencha em produção.** |
+| `WHATSAPP_APP_SECRET` | App Secret da Meta. É **obrigatório** com `ENV=production`: a aplicação não inicia sem ele. O webhook também rejeita a configuração inválida antes de processar mensagens. Com o segredo, exige assinatura Meta válida. |
 | `WHATSAPP_ACCESS_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID` | Credenciais de envio da Cloud API |
 | `DASHBOARD_TOKEN` | Token dos endpoints `/dashboard/*` (vazio = desligados) |
 | `AUTHORIZED_OPERATOR_PHONES` | Telefones com acesso de gestor quando a tabela `operadores` está vazia (fallback) |
@@ -114,4 +114,4 @@ O repositório não deve conter `.env`, tokens, chaves privadas, bancos locais, 
 
 ## Deploy
 
-A aplicação é uma API ASGI e pode ser executada com Uvicorn atrás de um proxy reverso. Em produção, configure `WHATSAPP_APP_SECRET` para que só a Meta consiga chamar o webhook. Configurações de infraestrutura, credenciais e dados operacionais ficam fora do repositório.
+A aplicação é uma API ASGI e pode ser executada com Uvicorn atrás de um proxy reverso. Em produção, configure `WHATSAPP_APP_SECRET`: sem ele, o processo não inicia. O webhook ainda rejeita a configuração inválida antes de processar mensagens. Com o segredo configurado, somente requisições com `X-Hub-Signature-256` válida da Meta são aceitas. Configurações de infraestrutura, credenciais e dados operacionais ficam fora do repositório.

@@ -47,6 +47,11 @@ class Settings(BaseSettings):
     )
 
 
+def require_whatsapp_app_secret_in_production(settings: Settings) -> None:
+    if settings.env.strip().lower() in {"prod", "production"} and not settings.whatsapp_app_secret.strip():
+        raise RuntimeError("WHATSAPP_APP_SECRET is required when ENV=production")
+
+
 @lru_cache
 def get_settings() -> Settings:
     return Settings()
