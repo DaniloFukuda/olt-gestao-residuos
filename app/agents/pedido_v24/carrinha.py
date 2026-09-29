@@ -5,7 +5,7 @@ import unicodedata
 from dataclasses import dataclass
 from typing import Any
 
-from app.agents.pedido_v24.despejo import divergencia_residuo_prompt
+from app.agents.pedido_v24 import despejo
 from app.agents.pedido_v24.transitions import AdvanceTransition, IdleTransition
 
 
@@ -283,48 +283,22 @@ class CarrinhaOperationalAgent:
     def decide_despejo_residuo(self, conversa, message):
         ctx = dict(conversa.contexto_json or {})
         choice = self._normalize((message.texto or "").strip())
-        available = ctx.get("residuos_disponiveis") or []
-        residue = None
-        if choice == "despejo_residuo:limpo":
-            residue = "Entulho Limpo"
-        elif choice == "despejo_residuo:misto":
-            residue = "Entulho Misto"
-        if choice.isdigit() and 1 <= int(choice) <= len(available):
-            residue = available[int(choice) - 1]
-        if not residue:
-            residue = next((item for item in available if self._normalize(item) == choice), None)
+        residue = despejo.residuo_escolhido(choice, ctx.get("residuos_disponiveis"), self._normalize)
         if not residue:
             return "Selecione um tipo de resíduo com cota em aberto."
-        contratado = ctx.get("residuo_contratado")
-        if contratado and residue != contratado:
-            ctx.update({"residuo_efetivo": residue, "carga_errada": True, "relato_carga": None})
-            return AdvanceTransition("v24_despejo_relato", ctx, divergencia_residuo_prompt(residue, contratado))
-        ctx.update({"residuo_efetivo": residue, "carga_errada": False, "relato_carga": None})
+        if despejo.aplicar_residuo(ctx, residue):
+            return AdvanceTransition("v24_despejo_relato", ctx, despejo.RELATO_PROMPT)
         return PrepararFotoDespejoCarrinha(ctx)
 
     def decide_despejo_conformidade(self, conversa, message):
         ctx = dict(conversa.contexto_json or {})
-        choice = self._normalize(message.texto)
-        if choice == "despejo_conformidade:sim":
-            choice = "1"
-        elif choice == "despejo_conformidade:nao":
-            choice = "2"
-        if choice in {"1", "sim", "sim, corresponde", "✅ sim, corresponde", "sim, tudo certo", "✅ sim, tudo certo"}:
-            efetivo = ctx.get("residuo_assumido") or ctx["residuo_contratado"]
-            if efetivo != ctx["residuo_contratado"]:
-                ctx.update({"residuo_efetivo": efetivo, "carga_errada": True, "relato_carga": None})
-                return AdvanceTransition(
-                    "v24_despejo_relato", ctx, divergencia_residuo_prompt(efetivo, ctx["residuo_contratado"])
-                )
-            ctx.update({
-                "residuo_efetivo": efetivo,
-                "carga_errada": False,
-                "relato_carga": None,
-            })
+        choice = despejo.normalizar_conformidade(self._normalize(message.texto))
+        if choice in despejo.CONFORMIDADE_SIM:
+            despejo.aplicar_conformidade_sim(ctx)
             return PrepararFotoDespejoCarrinha(ctx)
-        if choice in {"2", "nao", "nao, existe divergencia", "❌ nao, existe divergencia", "nao, esta misturado/errado", "🚨 nao, esta misturado/errado"}:
-            ctx["carga_errada"] = True
-            return AdvanceTransition("v24_despejo_relato", ctx, "Descreva a divergencia com pelo menos 10 caracteres.")
+        if choice in despejo.CONFORMIDADE_NAO:
+            despejo.aplicar_conformidade_nao(ctx)
+            return AdvanceTransition("v24_despejo_residuo", ctx, despejo.RESIDUO_REAL_PROMPT)
         return "Selecione se o material corresponde ao residuo contratado."
 
     def decide_despejo_relato(self, conversa, message):
@@ -332,11 +306,7 @@ class CarrinhaOperationalAgent:
         relato = (message.texto or "").strip()
         if len(relato) < 10:
             return "O relato da carga precisa ter pelo menos 10 caracteres."
-        ctx.update({
-            "relato_carga": relato,
-            "carga_errada": True,
-            "residuo_efetivo": ctx.get("residuo_efetivo") or ctx.get("residuo_assumido") or ctx.get("residuo_contratado"),
-        })
+        despejo.aplicar_relato(ctx, relato)
         return PrepararFotoDespejoCarrinha(ctx)
 
     def decide_despejo_foto(self, conversa, message):

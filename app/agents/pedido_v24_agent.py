@@ -7,7 +7,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from sqlalchemy.orm import Session
 
-from app.agents.pedido_v24.despejo import divergencia_residuo_prompt
+from app.agents.pedido_v24 import despejo
 from app.agents.pedido_v24.transitions import AdvanceTransition
 from app.agents.pedido_v24.contentor_cadastro import (
     CadastroModality,
@@ -857,28 +857,10 @@ class PedidoV24Agent:
             self._hydrate_legacy_despejo_context(ctx)
         if state == "v24_despejo_residuo":
             available = ctx.get("residuos_disponiveis") or []
-            residue = None
-            if choice == "despejo_residuo:limpo":
-                residue = "Entulho Limpo"
-            elif choice == "despejo_residuo:misto":
-                residue = "Entulho Misto"
-            if choice.isdigit() and 1 <= int(choice) <= len(available):
-                residue = available[int(choice) - 1]
-            if not residue:
-                residue = next((r for r in available if self._norm(r) == choice), None)
+            residue = despejo.residuo_escolhido(choice, available, self._norm)
             if residue and "pedido_id" in ctx:
-                ctx["residuo_efetivo"] = residue
-                ctx["relato_carga"] = None
-                contratado = ctx.get("residuo_contratado")
-                if contratado and residue != contratado:
-                    ctx["carga_errada"] = True
-                    return self._advance(
-                        conversa,
-                        "v24_despejo_relato",
-                        ctx,
-                        divergencia_residuo_prompt(residue, contratado),
-                    )
-                ctx["carga_errada"] = False
+                if despejo.aplicar_residuo(ctx, residue):
+                    return self._advance(conversa, "v24_despejo_relato", ctx, despejo.RELATO_PROMPT)
                 return self._advance(conversa, "v24_despejo_foto", ctx, self._despejo_foto_prompt(ctx))
             if not residue:
                 return "Selecione um tipo de resíduo com cota em aberto."
@@ -886,26 +868,13 @@ class PedidoV24Agent:
             return self._idle(conversa, "✅ Despejo auditado e ciclo concluído.")
         if state == "v24_despejo_conformidade":
             if "pedido_id" in ctx:
-                if choice == "despejo_conformidade:sim":
-                    choice = "1"
-                elif choice == "despejo_conformidade:nao":
-                    choice = "2"
-                if choice in {"1", "sim", "sim, corresponde", "âœ… sim, corresponde", "sim, tudo certo", "âœ… sim, tudo certo"}:
-                    ctx["residuo_efetivo"] = ctx.get("residuo_assumido") or ctx["residuo_contratado"]
-                    ctx["relato_carga"] = None
-                    if ctx["residuo_efetivo"] != ctx["residuo_contratado"]:
-                        ctx["carga_errada"] = True
-                        return self._advance(
-                            conversa,
-                            "v24_despejo_relato",
-                            ctx,
-                            divergencia_residuo_prompt(ctx["residuo_efetivo"], ctx["residuo_contratado"]),
-                        )
-                    ctx["carga_errada"] = False
+                choice = despejo.normalizar_conformidade(choice)
+                if choice in despejo.CONFORMIDADE_SIM:
+                    despejo.aplicar_conformidade_sim(ctx)
                     return self._advance(conversa, "v24_despejo_foto", ctx, self._despejo_foto_prompt(ctx))
-                if choice in {"2", "nao", "nao, existe divergencia", "âŒ nao, existe divergencia", "nao, esta misturado/errado", "ðŸš¨ nao, esta misturado/errado"}:
-                    ctx["carga_errada"] = True
-                    return self._advance(conversa, "v24_despejo_relato", ctx, "Descreva a divergencia com pelo menos 10 caracteres.")
+                if choice in despejo.CONFORMIDADE_NAO:
+                    despejo.aplicar_conformidade_nao(ctx)
+                    return self._advance(conversa, "v24_despejo_residuo", ctx, despejo.RESIDUO_REAL_PROMPT)
                 return "Selecione se o material corresponde ao residuo contratado."
             residue = ctx["residuo_assumido"]
             if choice in {"1", "sim, tudo certo", "✅ sim, tudo certo"}:
@@ -919,13 +888,7 @@ class PedidoV24Agent:
                 relato = raw.strip()
                 if len(relato) < 10:
                     return "O relato da carga precisa ter pelo menos 10 caracteres."
-                ctx["relato_carga"] = relato
-                ctx["carga_errada"] = True
-                ctx["residuo_efetivo"] = (
-                    ctx.get("residuo_efetivo")
-                    or ctx.get("residuo_assumido")
-                    or ctx.get("residuo_contratado")
-                )
+                despejo.aplicar_relato(ctx, relato)
                 return self._advance(
                     conversa,
                     "v24_despejo_foto",
@@ -939,11 +902,11 @@ class PedidoV24Agent:
             )
             return self._idle(conversa, "✅ Ciclo concluído com pendência de carga.")
         if state == "v24_despejo_confirmacao":
-            if choice in {"1", "confirmar despejo", "confirmar", "âœ… confirmar despejo"}:
+            if choice in {"1", "confirmar despejo", "confirmar", "✅ confirmar despejo"}:
                 return self._confirmar_despejo_atual(conversa, ctx)
-            if choice in {"2", "voltar", "â†©ï¸ voltar"}:
+            if choice in {"2", "voltar", "↩️ voltar"}:
                 return self._advance(conversa, "v24_despejo_conformidade", ctx, self._despejo_conformidade_prompt(ctx))
-            if choice in {"3", "cancelar", "âŒ cancelar"}:
+            if choice in {"3", "cancelar", "❌ cancelar"}:
                 return self._idle(conversa, "Despejo cancelado. Nenhuma foto foi salva e o ativo permanece em andamento.")
             return "Escolha Confirmar despejo, Voltar ou Cancelar."
         return self._idle(conversa, "Fluxo reiniciado. Abra o menu para continuar.")
@@ -1071,6 +1034,7 @@ class PedidoV24Agent:
             "relato_carga",
             "residuos_disponiveis",
             "saldo_cotas_visualizado",
+            "divergencia_reportada",
         ):
             ctx.pop(key, None)
 
@@ -1376,23 +1340,13 @@ class PedidoV24Agent:
         )
 
     def _despejo_tem_divergencia(self, ctx) -> bool:
-        """Determina se há divergência no despejo.
+        """Há divergência só quando o motorista a apontou na conformidade.
 
-        Considera divergência quando:
-        - O fluxo de conformidade marcou explicitamente carga_errada=True; OU
-        - O resíduo efetivo difere do resíduo contratado.
+        Resíduo efetivo diferente do contratado do item não basta: dentro do
+        mesmo pedido os contentores podem ser trocados, e a conta é feita pelo
+        total (ver app/agents/pedido_v24/despejo.py).
         """
-        carga_errada = bool(ctx.get("carga_errada"))
-        residuo_contratado = ctx.get("residuo_contratado")
-        residuo_efetivo = ctx.get("residuo_efetivo")
-
-        residuos_diferentes = bool(
-            residuo_contratado
-            and residuo_efetivo
-            and residuo_contratado != residuo_efetivo
-        )
-
-        return carga_errada or residuos_diferentes
+        return bool(ctx.get("carga_errada"))
 
     def _despejo_confirmacao_prompt(self, ctx) -> str:
         pedido = self.service.get(ctx["pedido_id"])

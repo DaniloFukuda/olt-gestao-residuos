@@ -6,7 +6,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
-from app.agents.pedido_v24.despejo import divergencia_residuo_prompt
+from app.agents.pedido_v24 import despejo
 from app.agents.pedido_v24.transitions import AdvanceTransition, IdleTransition
 from app.models.conversa import ConversaWhatsApp
 
@@ -417,75 +417,27 @@ class ContentorOperationalAgent:
     def decide_despejo_residuo(self, conversa, message):
         """Decide o resíduo efetivo sem acessar banco ou serviço."""
         ctx = dict(conversa.contexto_json or {})
-        raw = (message.texto or "").strip()
-        choice = self._normalize(raw)
-        available = ctx.get("residuos_disponiveis") or []
-        residue = None
-        if choice == "despejo_residuo:limpo":
-            residue = "Entulho Limpo"
-        elif choice == "despejo_residuo:misto":
-            residue = "Entulho Misto"
-        if choice.isdigit() and 1 <= int(choice) <= len(available):
-            residue = available[int(choice) - 1]
-        if not residue:
-            residue = next(
-                (item for item in available if self._normalize(item) == choice),
-                None,
-            )
+        choice = self._normalize((message.texto or "").strip())
+        residue = despejo.residuo_escolhido(
+            choice, ctx.get("residuos_disponiveis"), self._normalize
+        )
         if not residue:
             return "Selecione um tipo de resíduo com cota em aberto."
-        ctx["residuo_efetivo"] = residue
-        ctx["relato_carga"] = None
-        contratado = ctx.get("residuo_contratado")
-        if contratado and residue != contratado:
-            # A confirmação trata resíduo diferente do contratado como divergência,
-            # que o PedidoService só aceita com relato.
-            ctx["carga_errada"] = True
-            return AdvanceTransition(
-                "v24_despejo_relato",
-                ctx,
-                divergencia_residuo_prompt(residue, contratado),
-            )
-        ctx["carga_errada"] = False
+        if despejo.aplicar_residuo(ctx, residue):
+            return AdvanceTransition("v24_despejo_relato", ctx, despejo.RELATO_PROMPT)
         return PrepararFotoDespejoContentor(ctx)
 
     def decide_despejo_conformidade(self, conversa, message):
         """Decide conformidade ou divergência sem acessar persistência."""
         ctx = dict(conversa.contexto_json or {})
-        choice = self._normalize(message.texto or "")
-        if choice == "despejo_conformidade:sim":
-            choice = "1"
-        elif choice == "despejo_conformidade:nao":
-            choice = "2"
-        if choice in {
-            "1", "sim", "sim, corresponde", "✅ sim, corresponde",
-            "sim, tudo certo", "✅ sim, tudo certo",
-        }:
-            ctx["residuo_efetivo"] = (
-                ctx.get("residuo_assumido") or ctx["residuo_contratado"]
-            )
-            ctx["relato_carga"] = None
-            if ctx["residuo_efetivo"] != ctx["residuo_contratado"]:
-                ctx["carga_errada"] = True
-                return AdvanceTransition(
-                    "v24_despejo_relato",
-                    ctx,
-                    divergencia_residuo_prompt(
-                        ctx["residuo_efetivo"], ctx["residuo_contratado"]
-                    ),
-                )
-            ctx["carga_errada"] = False
+        choice = despejo.normalizar_conformidade(self._normalize(message.texto or ""))
+        if choice in despejo.CONFORMIDADE_SIM:
+            despejo.aplicar_conformidade_sim(ctx)
             return PrepararFotoDespejoContentor(ctx)
-        if choice in {
-            "2", "nao", "nao, existe divergencia",
-            "❌ nao, existe divergencia", "nao, esta misturado/errado",
-            "🚨 nao, esta misturado/errado",
-        }:
-            ctx["carga_errada"] = True
+        if choice in despejo.CONFORMIDADE_NAO:
+            despejo.aplicar_conformidade_nao(ctx)
             return AdvanceTransition(
-                "v24_despejo_relato",
-                ctx,
-                "Descreva a divergencia com pelo menos 10 caracteres.",
+                "v24_despejo_residuo", ctx, despejo.RESIDUO_REAL_PROMPT
             )
         return "Selecione se o material corresponde ao residuo contratado."
 
@@ -495,13 +447,7 @@ class ContentorOperationalAgent:
         relato = (message.texto or "").strip()
         if len(relato) < 10:
             return "O relato da carga precisa ter pelo menos 10 caracteres."
-        ctx["relato_carga"] = relato
-        ctx["carga_errada"] = True
-        ctx["residuo_efetivo"] = (
-            ctx.get("residuo_efetivo")
-            or ctx.get("residuo_assumido")
-            or ctx.get("residuo_contratado")
-        )
+        despejo.aplicar_relato(ctx, relato)
         return PrepararFotoDespejoContentor(ctx)
 
     def decide_despejo_confirmacao(self, conversa, message):

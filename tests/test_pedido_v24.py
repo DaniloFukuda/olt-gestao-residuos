@@ -64,7 +64,11 @@ def liberar_operadores(monkeypatch):
 @pytest.mark.parametrize(
     ("residuo_contratado", "residuo_efetivo", "carga_errada", "esperado"),
     [
-        pytest.param("Entulho Misto", "Entulho Limpo", False, True, id="residuos-diferentes"),
+        # Divergência vale pelo total do pedido: contentores trocados dentro
+        # do pedido (efetivo diferente do contratado do item, com cota em
+        # aberto) não são divergência. Substitui a regra por item do hotfix.
+        pytest.param("Entulho Misto", "Entulho Limpo", False, False, id="residuos-diferentes-com-cota"),
+        pytest.param("Entulho Misto", "Entulho Limpo", True, True, id="residuos-diferentes-apontado"),
         pytest.param("Entulho Limpo", "Entulho Limpo", False, False, id="residuos-iguais"),
         pytest.param("Entulho Limpo", "Entulho Limpo", True, True, id="nao-corresponde"),
         pytest.param("Entulho Limpo", "Entulho Limpo", False, False, id="conformidade-confirmada"),
@@ -2427,7 +2431,8 @@ def test_despejo_v24_divergencia_valida_cria_pendencia_e_rejeita_relato_curto(db
 
     for item in ["4", "1", "1"]:
         router.handle(msg(item))
-    pergunta = router.handle(msg("despejo_conformidade:nao"))
+    residuo_real = router.handle(msg("despejo_conformidade:nao"))
+    pergunta = router.handle(msg("2"))
     curto = router.handle(msg("curto"))
     foto = router.handle(msg("  havia plastico misturado  "))
     router.handle(msg(kind="image", media="foto-divergencia"))
@@ -2435,12 +2440,16 @@ def test_despejo_v24_divergencia_valida_cria_pendencia_e_rejeita_relato_curto(db
     final = router.handle(msg("1"))
 
     db_session.refresh(pedido.contentores[0])
+    assert "Qual resíduo caiu de fato no chão?" in residuo_real
     assert "pelo menos 10" in pergunta
     assert "pelo menos 10" in curto
     assert "Envie a foto" in foto
     assert "Confirmar despejo" in confirmacao
+    assert "Residuo efetivo: Entulho Misto" in confirmacao
+    assert "Divergencia: Sim" in confirmacao
     assert "processado no vazadouro" in final
-    assert pedido.contentores[0].residuo_efetivo_vazadouro == "Entulho Limpo"
+    # Grava o resíduo que caiu de fato, mesmo sem cota de Misto no pedido.
+    assert pedido.contentores[0].residuo_efetivo_vazadouro == "Entulho Misto"
     assert pedido.contentores[0].carga_errada is True
     assert pedido.contentores[0].relato_carga == "havia plastico misturado"
     assert pedido.contentores[0].status_resolucao_carga == StatusResolucaoPedido.PENDENTE.value
@@ -3043,8 +3052,8 @@ def _pedido_misto_recolhido(service):
     return pedido, limpo, misto
 
 
-def test_despejo_v24_residuo_diferente_do_contratado_pede_relato_e_conclui(db_session, monkeypatch):
-    """Antes, a divergência sem relato era rejeitada no serviço e o fluxo voltava em loop."""
+def test_despejo_v24_contentores_trocados_no_pedido_nao_sao_divergencia(db_session, monkeypatch):
+    """Divergência vale pelo total do pedido: trocar Limpo e Misto na obra não abre pendência."""
     liberar_operadores(monkeypatch)
     service = PedidoService(db_session)
     pedido, limpo, misto = _pedido_misto_recolhido(service)
@@ -3052,32 +3061,75 @@ def test_despejo_v24_residuo_diferente_do_contratado_pede_relato_e_conclui(db_se
 
     for item in ["4", "1", "1"]:
         router.handle(msg(item))
-    pergunta = router.handle(msg("despejo_residuo:misto"))
-    router.handle(msg("cliente trocou os contentores na obra"))
+    foto = router.handle(msg("despejo_residuo:misto"))
     router.handle(msg(kind="image", media="foto-7"))
     confirmacao = router.handle(msg("2"))
     primeiro = router.handle(msg("1"))
 
-    assert "diferente do contratado para este equipamento (Entulho Limpo)" in pergunta
-    assert "Relato: cliente trocou os contentores na obra" in confirmacao
+    assert "Envie a foto do despejo" in foto
+    assert "Divergencia: Nao" in confirmacao
     assert "processado no vazadouro" in primeiro
     db_session.refresh(limpo)
     assert limpo.residuo_efetivo_vazadouro == "Entulho Misto"
-    assert limpo.carga_errada is True
+    assert limpo.carga_errada is False
     assert limpo.status_ciclo == StatusCicloPedido.CONCLUIDO.value
 
     router.handle(msg("1"))
-    pergunta_restante = router.handle(msg("despejo_conformidade:sim"))
-    router.handle(msg("contentor misto veio com entulho limpo"))
+    conformidade = router.handle(msg("despejo_conformidade:sim"))
     router.handle(msg(kind="image", media="foto-8"))
     router.handle(msg("2"))
     final = router.handle(msg("1"))
 
-    assert "diferente do contratado para este equipamento (Entulho Misto)" in pergunta_restante
+    assert "Envie a foto do despejo" in conformidade
     assert "Pedido do cliente Cliente Troca concluído" in final
     db_session.refresh(misto)
     assert misto.residuo_efetivo_vazadouro == "Entulho Limpo"
+    assert misto.carga_errada is False
     assert misto.status_ciclo == StatusCicloPedido.CONCLUIDO.value
+    assert service.pendencias()["cargas"] == []
+    cotas = service.cotas_residuos(pedido.id)
+    assert cotas["Entulho Limpo"]["saldo"] == 0
+    assert cotas["Entulho Misto"]["saldo"] == 0
+
+
+def test_cotas_divergencia_consome_vaga_em_aberto_do_pedido(db_session):
+    service = PedidoService(db_session)
+    pedido = service.criar(
+        nome_cliente="Cliente Cotas",
+        telefone_cliente="351912345678",
+        data_planejada=datetime.now(timezone.utc),
+        valor_global="200",
+        pago=True,
+        forma_pagamento="MBWay",
+        pedido_feito_por="gestor",
+        endereco_aproximado="Rua",
+        ponto_referencia=None,
+        residuos=["Entulho Limpo", "Entulho Limpo"],
+    )
+    primeiro, segundo = pedido.contentores
+    service.confirmar_entrega_lote(
+        pedido.id, "motorista", 38.7, -9.1, None,
+        [
+            {"contentor_id": primeiro.id, "numero_adesivo": "11", "fotos": ["f11"]},
+            {"contentor_id": segundo.id, "numero_adesivo": "12", "fotos": ["f12"]},
+        ],
+    )
+    service.confirmar_recolha(primeiro.id, "motorista", False, None)
+    service.confirmar_recolha(segundo.id, "motorista", False, None)
+
+    with pytest.raises(ValueError, match="Não existe cota"):
+        service.confirmar_despejo(primeiro.id, "Entulho Misto", False, None, operador="m", fotos=["d1"])
+    service.confirmar_despejo(
+        primeiro.id, "Entulho Misto", True, "veio misturado com plastico", operador="m", fotos=["d1"]
+    )
+    cotas = service.cotas_residuos(pedido.id)
+    assert cotas["Entulho Limpo"] == {"contratado": 2, "consumido": 1, "saldo": 1}
+    assert cotas["Entulho Misto"] == {"contratado": 0, "consumido": 0, "saldo": 0}
+
+    service.confirmar_despejo(segundo.id, "Entulho Limpo", False, None, operador="m", fotos=["d2"])
+    cotas = service.cotas_residuos(pedido.id)
+    assert cotas["Entulho Limpo"]["saldo"] == 0
+    assert [item.id for item in service.pendencias()["cargas"]] == [primeiro.id]
 
 
 def test_despejo_v24_residuo_igual_ao_contratado_segue_sem_relato(db_session, monkeypatch):

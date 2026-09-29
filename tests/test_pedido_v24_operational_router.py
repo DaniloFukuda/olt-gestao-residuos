@@ -3229,7 +3229,9 @@ def test_contentor_despejo_conformidade_conforme_preserva_aliases(entrada):
     assert decision.context["relato_carga"] is None
 
 
-def test_contentor_despejo_conformidade_com_cota_de_outro_residuo_exige_relato():
+def test_contentor_despejo_conformidade_com_cota_de_outro_residuo_nao_e_divergencia():
+    # A divergência vale pelo total do pedido: o item contratado como Limpo
+    # pode ser despejado como Misto quando a cota restante é de Misto.
     contexto = _contexto_despejo_moderno(residuo_assumido="Entulho Misto")
     decision = ContentorOperationalAgent(
         lambda: [], Mock()
@@ -3237,10 +3239,9 @@ def test_contentor_despejo_conformidade_com_cota_de_outro_residuo_exige_relato()
         SimpleNamespace(contexto_json=contexto), mensagem("sim")
     )
 
-    assert decision.next_state == "v24_despejo_relato"
+    assert isinstance(decision, PrepararFotoDespejoContentor)
     assert decision.context["residuo_efetivo"] == "Entulho Misto"
-    assert decision.context["carga_errada"] is True
-    assert "diferente do contratado para este equipamento (Entulho Limpo)" in decision.response
+    assert decision.context["carga_errada"] is False
 
 
 @pytest.mark.parametrize(
@@ -3256,9 +3257,27 @@ def test_contentor_despejo_conformidade_divergente_preserva_aliases(entrada):
         SimpleNamespace(contexto_json=contexto), mensagem(entrada)
     )
 
-    assert decision.next_state == "v24_despejo_relato"
+    assert decision.next_state == "v24_despejo_residuo"
     assert decision.context["carga_errada"] is True
-    assert decision.response == "Descreva a divergencia com pelo menos 10 caracteres."
+    assert decision.context["divergencia_reportada"] is True
+    assert decision.context["residuos_disponiveis"] == ["Entulho Limpo", "Entulho Misto"]
+    assert "Qual resíduo caiu de fato no chão?" in decision.response
+
+
+def test_contentor_despejo_residuo_real_apos_divergencia_pede_relato():
+    contexto = _contexto_despejo_moderno(
+        residuo_assumido="Entulho Limpo", divergencia_reportada=True, carga_errada=True
+    )
+    decision = ContentorOperationalAgent(
+        lambda: [], Mock()
+    ).decide_despejo_residuo(
+        SimpleNamespace(contexto_json=contexto), mensagem("2")
+    )
+
+    assert decision.next_state == "v24_despejo_relato"
+    assert decision.context["residuo_efetivo"] == "Entulho Misto"
+    assert decision.context["carga_errada"] is True
+    assert decision.response == "Descreva a divergência com pelo menos 10 caracteres."
 
 
 def test_contentor_despejo_conformidade_invalida_preserva_mensagem():
@@ -4548,7 +4567,7 @@ def test_carrinha_despejo_decisoes_preservam_residuo_relato_foto_e_comando():
     assert isinstance(residuo, PrepararFotoDespejoCarrinha)
     assert residuo.context["residuo_efetivo"] == "Entulho Limpo"
     divergencia = agent.decide_despejo_conformidade(conversa, mensagem("2"))
-    assert divergencia.next_state == "v24_despejo_relato"
+    assert divergencia.next_state == "v24_despejo_residuo"
     assert agent.decide_despejo_relato(conversa, mensagem(" curto ")) == "O relato da carga precisa ter pelo menos 10 caracteres."
     relato = agent.decide_despejo_relato(conversa, mensagem("  material divergente  "))
     assert relato.context["relato_carga"] == "material divergente"
@@ -4840,26 +4859,41 @@ def _contexto_despejo_carrinha(**extra):
     return SimpleNamespace(contexto_json=ctx)
 
 
-def test_despejo_carrinha_residuo_diferente_do_contratado_exige_relato():
+def test_despejo_carrinha_residuo_diferente_do_contratado_com_cota_segue_sem_relato():
+    # Divergência vale pelo total do pedido (ver app/agents/pedido_v24/despejo.py).
     decision = CarrinhaOperationalAgent().decide_despejo_residuo(
         _contexto_despejo_carrinha(), mensagem("despejo_residuo:misto")
     )
 
-    assert decision.next_state == "v24_despejo_relato"
+    assert isinstance(decision, PrepararFotoDespejoCarrinha)
     assert decision.context["residuo_efetivo"] == "Entulho Misto"
-    assert decision.context["carga_errada"] is True
-    assert "diferente do contratado" in decision.response
+    assert decision.context["carga_errada"] is False
 
 
-def test_despejo_carrinha_conformidade_com_cota_de_outro_residuo_exige_relato():
+def test_despejo_carrinha_conformidade_com_cota_de_outro_residuo_segue_sem_relato():
     decision = CarrinhaOperationalAgent().decide_despejo_conformidade(
         _contexto_despejo_carrinha(residuo_assumido="Entulho Misto"),
         mensagem("despejo_conformidade:sim"),
     )
 
-    assert decision.next_state == "v24_despejo_relato"
+    assert isinstance(decision, PrepararFotoDespejoCarrinha)
     assert decision.context["residuo_efetivo"] == "Entulho Misto"
-    assert decision.context["carga_errada"] is True
+    assert decision.context["carga_errada"] is False
+
+
+def test_despejo_carrinha_nao_corresponde_pergunta_residuo_real_e_pede_relato():
+    agent = CarrinhaOperationalAgent()
+    divergencia = agent.decide_despejo_conformidade(
+        _contexto_despejo_carrinha(residuo_assumido="Entulho Limpo"),
+        mensagem("despejo_conformidade:nao"),
+    )
+    assert divergencia.next_state == "v24_despejo_residuo"
+    residuo = agent.decide_despejo_residuo(
+        SimpleNamespace(contexto_json=divergencia.context), mensagem("despejo_residuo:misto")
+    )
+    assert residuo.next_state == "v24_despejo_relato"
+    assert residuo.context["residuo_efetivo"] == "Entulho Misto"
+    assert residuo.context["carga_errada"] is True
 
 
 def test_despejo_carrinha_residuo_igual_ao_contratado_segue_para_foto():

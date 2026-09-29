@@ -879,9 +879,7 @@ class PedidoService:
                 != StatusOperacionalCarrinha.AGUARDANDO_DESPEJO.value
             ):
                 raise ValueError("Carrinha não disponível para despejo.")
-            cotas = self.cotas_residuos(pedido_protegido_id)
-            if cotas[residuo_efetivo]["saldo"] <= 0:
-                raise ValueError("Não existe cota em aberto para esse tipo de resíduo.")
+            self._validar_cota_despejo(pedido_protegido_id, residuo_efetivo, carga_errada)
             agora = utcnow()
             resultado = self.db.execute(
                 update(PedidoContentor)
@@ -939,12 +937,36 @@ class PedidoService:
             }
         )
 
+    def _validar_cota_despejo(self, pedido_id: int, residuo_efetivo: str, carga_errada: bool) -> None:
+        """A divergência vale pelo total do pedido.
+
+        Sem divergência, o resíduo despejado precisa de cota própria em aberto.
+        Com divergência (o motorista informou que a carga não corresponde), o
+        resíduo real é gravado mesmo sem cota e o item consome uma vaga
+        qualquer ainda em aberto no pedido.
+        """
+        cotas = self.cotas_residuos(pedido_id)
+        if carga_errada:
+            if sum(dados["saldo"] for dados in cotas.values()) <= 0:
+                raise ValueError("Não existem cotas de resíduo pendentes para este pedido.")
+            return
+        if cotas[residuo_efetivo]["saldo"] <= 0:
+            raise ValueError("Não existe cota em aberto para esse tipo de resíduo.")
+
     def cotas_residuos(self, pedido_id: int) -> dict[str, dict[str, int]]:
+        """Cotas por resíduo: contratado, consumido e saldo.
+
+        Cada item concluído consome uma vaga. Sem divergência, a vaga é a do
+        resíduo efetivo. Um item com carga divergente consome, pela ordem, a
+        vaga do resíduo efetivo, a do contratado ou qualquer vaga em aberto,
+        porque o resíduo real pode não ter sido contratado no pedido.
+        """
         pedido = self.get(pedido_id)
         if not pedido:
             raise ValueError("Pedido não encontrado.")
         contratadas = Counter()
         consumidas = Counter()
+        divergentes = []
         for contentor in pedido.contentores:
             if contentor.residuo_contratado not in RESIDUOS_CANONICOS:
                 raise ValueError("Pedido precisa de revisão: resíduo contratado inválido.")
@@ -955,7 +977,29 @@ class PedidoService:
                 raise ValueError("Pedido precisa de revisão: despejo concluído sem resíduo efetivo.")
             if contentor.residuo_efetivo_vazadouro not in RESIDUOS_CANONICOS:
                 raise ValueError("Pedido precisa de revisão: resíduo efetivo inválido.")
+            if contentor.carga_errada:
+                divergentes.append(contentor)
+                continue
             consumidas[contentor.residuo_efetivo_vazadouro] += 1
+
+        inicio = datetime.min.replace(tzinfo=timezone.utc)
+        divergentes.sort(
+            key=lambda item: (
+                _as_utc(item.despejo_data_hora) if item.despejo_data_hora else inicio,
+                item.id,
+            )
+        )
+        for contentor in divergentes:
+            candidatos = [
+                contentor.residuo_efetivo_vazadouro,
+                contentor.residuo_contratado,
+                *RESIDUOS_CANONICOS,
+            ]
+            vaga = next(
+                (residuo for residuo in candidatos if contratadas[residuo] - consumidas[residuo] > 0),
+                contentor.residuo_efetivo_vazadouro,
+            )
+            consumidas[vaga] += 1
 
         cotas = {}
         for residuo in RESIDUOS_CANONICOS:
@@ -1105,9 +1149,7 @@ class PedidoService:
                 raise ValueError("Contentor não disponível para despejo.")
             if contentor.pedido_id != pedido_protegido_id:
                 raise ValueError("Ativo nao pertence ao pedido selecionado.")
-            cotas = self.cotas_residuos(pedido_protegido_id)
-            if cotas[residuo_efetivo]["saldo"] <= 0:
-                raise ValueError("Não existe cota em aberto para esse tipo de resíduo.")
+            self._validar_cota_despejo(pedido_protegido_id, residuo_efetivo, carga_errada)
             contentor.residuo_efetivo_vazadouro = residuo_efetivo
             contentor.carga_errada = carga_errada
             contentor.relato_carga = relato_limpo if carga_errada else None
