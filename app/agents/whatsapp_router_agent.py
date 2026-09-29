@@ -319,7 +319,10 @@ class WhatsappRouterAgent:
             if perfil == PerfilOperador.FUNCIONARIO:
                 return "Seu perfil de motorista não possui permissão para cadastrar pedidos."
             return self.pedido_v24_router.start("cadastro", conversa)
-        if text in {
+        # As palavras soltas ("entrega", "recolha") seguem a mesma regra das opções
+        # 2 e 3; antes iam direto ao fluxo legado e respondiam que não havia
+        # pedidos mesmo com pedidos V24 pendentes.
+        if text in ENTREGA_COMMANDS or text in {
             "2", "confirmar entrega de contentor", "confirmar entrega do lote",
             "confirmar chegada", "confirmar chegada / entrega", "chegada",
         }:
@@ -329,7 +332,7 @@ class WhatsappRouterAgent:
             ):
                 return self.pedido_v24_router.start("entrega", conversa)
             return self.entrega_agent.start(conversa)
-        if text in {
+        if text in RECOLHA_COMMANDS or text in {
             "3", "confirmar recolha de contentor", "confirmar partida",
             "confirmar recolha / partida", "partida",
         }:

@@ -3094,3 +3094,51 @@ def test_despejo_v24_residuo_igual_ao_contratado_segue_sem_relato(db_session, mo
 
     assert "Envie a foto do despejo" in foto
     assert "Divergencia: Nao" in confirmacao
+
+
+@pytest.mark.parametrize("palavra", ["entrega", "entregar", "confirmar entrega"])
+def test_palavra_entrega_abre_pedidos_v24_pendentes(db_session, monkeypatch, palavra):
+    liberar_operadores(monkeypatch)
+    PedidoService(db_session).criar(
+        nome_cliente="Cliente Palavra",
+        telefone_cliente="351912345678",
+        data_planejada=datetime.now(timezone.utc),
+        valor_global="100",
+        pago=True,
+        forma_pagamento="MBWay",
+        pedido_feito_por="gestor",
+        endereco_aproximado="Rua",
+        ponto_referencia=None,
+        residuos=["Entulho Limpo"],
+    )
+
+    response = WhatsappRouterAgent(db_session).handle(msg(palavra))
+
+    assert "Selecione o cliente para confirmar a chegada / entrega" in response
+    assert "Cliente Palavra" in response
+
+
+@pytest.mark.parametrize("palavra", ["recolha", "recolher", "confirmar recolha"])
+def test_palavra_recolha_abre_pedidos_v24_entregues(db_session, monkeypatch, palavra):
+    liberar_operadores(monkeypatch)
+    service = PedidoService(db_session)
+    pedido = service.criar(
+        nome_cliente="Cliente Recolha Palavra",
+        telefone_cliente="351912345678",
+        data_planejada=datetime.now(timezone.utc),
+        valor_global="100",
+        pago=True,
+        forma_pagamento="MBWay",
+        pedido_feito_por="gestor",
+        endereco_aproximado="Rua",
+        ponto_referencia=None,
+        residuos=["Entulho Limpo"],
+    )
+    service.confirmar_entrega_lote(
+        pedido.id, "motorista", 38.7, -9.1, None,
+        [{"contentor_id": pedido.contentores[0].id, "numero_adesivo": "9", "fotos": ["f"]}],
+    )
+
+    response = WhatsappRouterAgent(db_session).handle(msg(palavra))
+
+    assert "Selecione o pedido para confirmar recolha / partida" in response
