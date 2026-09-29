@@ -3194,3 +3194,73 @@ def test_palavra_recolha_abre_pedidos_v24_entregues(db_session, monkeypatch, pal
     response = WhatsappRouterAgent(db_session).handle(msg(palavra))
 
     assert "Selecione o pedido para confirmar recolha / partida" in response
+
+
+@pytest.mark.parametrize("comando", ["novo", "Cadastrar", "iniciar", "começar", "comecar"])
+def test_comandos_de_inicio_abrem_novo_pedido_v24(db_session, monkeypatch, comando):
+    liberar_operadores(monkeypatch)
+
+    response = WhatsappRouterAgent(db_session).handle(msg(comando))
+
+    assert db_session.query(ConversaWhatsApp).one().estado_atual == "v24_cadastro_tipo_solicitacao"
+    assert "Contentor" in response and "Carrinha" in response
+
+
+def test_motorista_nao_abre_cadastro_por_comando_de_inicio(db_session, monkeypatch):
+    liberar_operadores(monkeypatch)
+    db_session.add_all([
+        Operador(telefone_whatsapp="351900009900", nome_operador="Gestor",
+                 perfil=PerfilOperador.GESTOR, ativo=True),
+        Operador(telefone_whatsapp="351900000555", nome_operador="Motorista",
+                 perfil=PerfilOperador.FUNCIONARIO, ativo=True),
+    ])
+    db_session.commit()
+
+    response = WhatsappRouterAgent(db_session).handle(msg("novo", phone="351900000555"))
+
+    assert response == "Seu perfil de motorista não possui permissão para cadastrar pedidos."
+
+
+def _item_entregue_ha(db_session, service, dias, nome, adesivo):
+    pedido = service.criar(
+        nome_cliente=nome,
+        telefone_cliente="351912345678",
+        data_planejada=datetime.now(timezone.utc),
+        valor_global="100",
+        pago=True,
+        forma_pagamento="MBWay",
+        pedido_feito_por="gestor",
+        endereco_aproximado="Rua",
+        ponto_referencia=None,
+        residuos=["Entulho Limpo"],
+    )
+    item = pedido.contentores[0]
+    service.confirmar_entrega_lote(
+        pedido.id, "motorista", 38.7, -9.1, None,
+        [{"contentor_id": item.id, "numero_adesivo": adesivo, "fotos": [f"f{adesivo}"]}],
+    )
+    item.entrega_data_hora = datetime.now(timezone.utc) - timedelta(days=dias)
+    db_session.commit()
+    return pedido, item
+
+
+def test_alugados_vencendo_e_atrasados_incluem_pedidos_v24(db_session, monkeypatch):
+    liberar_operadores(monkeypatch)
+    service = PedidoService(db_session)
+    regular, _ = _item_entregue_ha(db_session, service, 1, "Cliente Regular V24", "31")
+    amanha, _ = _item_entregue_ha(db_session, service, 4, "Cliente Amanha V24", "32")
+    atrasado, _ = _item_entregue_ha(db_session, service, 7, "Cliente Atrasado V24", "33")
+    router = WhatsappRouterAgent(db_session)
+
+    alugados = router.handle(msg("alugados"))
+    vencendo = router.handle(msg("vencendo"))
+    atrasados = router.handle(msg("atrasados"))
+
+    assert "Contentores alugados:" in alugados
+    for pedido in (regular, amanha, atrasado):
+        assert f"{pedido.nome_cliente} - vencimento" in alugados
+        assert f"pedido #{pedido.id}" in alugados
+    assert "32 - Cliente Amanha V24 - vencimento" in vencendo
+    assert "Cliente Regular V24" not in vencendo and "Cliente Atrasado V24" not in vencendo
+    assert "33 - Cliente Atrasado V24 - vencimento" in atrasados
+    assert "Cliente Regular V24" not in atrasados and "Cliente Amanha V24" not in atrasados

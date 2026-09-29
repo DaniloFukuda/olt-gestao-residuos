@@ -322,7 +322,11 @@ class WhatsappRouterAgent:
         if text == "5":
             return self._handle_operational_command("resumo", message.telefone, perfil)
 
-        if text in {"1", "novo pedido", "cadastrar pedido"}:
+        # "novo", "cadastrar", "iniciar"... abrem o mesmo Novo Pedido da opção 1.
+        # Antes abriam o cadastro unitário legado (AluguerContentor), que não
+        # aparece nas opções 2-5 do Menu V4. O fluxo legado continua a atender
+        # conversas que já estavam nele.
+        if text in {"1", "novo pedido", "cadastrar pedido"} or text in START_COMMANDS:
             if perfil == PerfilOperador.FUNCIONARIO:
                 return "Seu perfil de motorista não possui permissão para cadastrar pedidos."
             return self.pedido_v24_router.start("cadastro", conversa)
@@ -1304,23 +1308,54 @@ class WhatsappRouterAgent:
             return "Não existem contentores disponíveis."
         return "Contentores disponíveis:\n" + "\n".join(contentor.codigo for contentor in contentores)
 
+    # Os três comandos juntam o aluguer legado (AluguerContentor) e os
+    # contentores dos pedidos V24 entregues e ainda não recolhidos. O prazo
+    # V24 é de 5 dias a contar da entrega, o mesmo usado pelo painel.
     def _alugados(self) -> str:
-        alugueres = self._active_alugueres()
-        if not alugueres:
+        linhas = [self._format_aluguer(aluguer) for aluguer in self._active_alugueres()]
+        linhas.extend(
+            self._format_item_v24(pedido, item)
+            for pedido in self._pedidos_v32()
+            for item in self._sort_itens([
+                item for item in pedido.contentores
+                if self._is_contentor_para_recolha(item)
+                and item.status_ciclo == StatusCicloPedido.EM_ANDAMENTO.value
+            ])
+        )
+        if not linhas:
             return "Não existem contentores alugados."
-        return "Contentores alugados:\n" + "\n".join(self._format_aluguer(aluguer) for aluguer in alugueres)
+        return "Contentores alugados:\n" + "\n".join(linhas)
 
     def _vencendo(self) -> str:
-        alugueres = self.aluguer_service.listar_vencendo_amanha()
-        if not alugueres:
+        today = datetime.now(self._timezone()).date()
+        linhas = [self._format_aluguer(aluguer) for aluguer in self.aluguer_service.listar_vencendo_amanha()]
+        linhas.extend(
+            self._format_item_v24(pedido, item)
+            for pedido, itens in self._contentores_vencendo_amanha(self._pedidos_v32(), today)
+            for item in itens
+        )
+        if not linhas:
             return "Não existem alugueres com vencimento amanhã."
-        return "Alugueres que vencem amanhã:\n" + "\n".join(self._format_aluguer(aluguer) for aluguer in alugueres)
+        return "Alugueres que vencem amanhã:\n" + "\n".join(linhas)
 
     def _atrasados(self) -> str:
-        alugueres = self.aluguer_service.listar_atrasados()
-        if not alugueres:
+        today = datetime.now(self._timezone()).date()
+        linhas = [self._format_aluguer(aluguer) for aluguer in self.aluguer_service.listar_atrasados()]
+        linhas.extend(
+            self._format_item_v24(pedido, item)
+            for pedido, _data_entrega, itens in self._contentores_vencidos(self._pedidos_v32(), today)
+            for item in itens
+        )
+        if not linhas:
             return "Não existem alugueres em atraso."
-        return "Alugueres em atraso:\n" + "\n".join(self._format_aluguer(aluguer) for aluguer in alugueres)
+        return "Alugueres em atraso:\n" + "\n".join(linhas)
+
+    def _format_item_v24(self, pedido: Pedido, item: PedidoContentor) -> str:
+        vencimento = self._local_date(item.entrega_data_hora) + timedelta(days=5)
+        return (
+            f"{self._equipamento_numero(item)} - {pedido.nome_cliente} - "
+            f"vencimento {vencimento:%d/%m/%Y} - pedido #{pedido.id}"
+        )
 
     def _active_alugueres(self) -> list[AluguerContentor]:
         return (

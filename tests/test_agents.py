@@ -42,6 +42,17 @@ def liberar_operadores(monkeypatch):
     )
     monkeypatch.setattr(operador_service_module, "get_settings", lambda: settings)
 
+def iniciar_cadastro_legado(router, telefone):
+    """Abre o cadastro unitário legado (AluguerAgent).
+
+    "novo" passou a abrir o Novo Pedido V24; o fluxo legado só continua a
+    atender conversas que já estavam nele, por isso os testes dele o abrem
+    diretamente.
+    """
+    conversa = router._get_or_create_conversa(telefone)
+    return router.aluguer_agent.start(conversa)
+
+
 
 def autorizar_gestor_no_banco(db_session, telefone: str = "351900000000"):
     db_session.add(
@@ -200,7 +211,7 @@ def test_painel_classifica_vencimento_sqlite_na_data_local_correta(db_session, m
 
 
 def avancar_cadastro_ate_confirmacao_data(router, db_session, telefone: str = "351900001000"):
-    router.handle(text_message("novo", telefone=telefone))
+    iniciar_cadastro_legado(router, telefone)
     router.handle(
         NormalizedWhatsAppMessage(
             telefone=telefone,
@@ -528,7 +539,7 @@ def test_cancelamento_global_no_cadastro_aguardando_foto_limpa_sessao_sem_salvar
     SeedService(db_session).seed_contentores_iniciais()
     router = WhatsappRouterAgent(db_session)
 
-    router.handle(text_message("novo", telefone="351900001020"))
+    iniciar_cadastro_legado(router, "351900001020")
     router.handle(text_message("1", telefone="351900001020"))
     response = router.handle(text_message("cancelar", telefone="351900001020"))
     conversa = db_session.query(ConversaWhatsApp).filter_by(telefone="351900001020").one()
@@ -544,7 +555,7 @@ def test_cancelamento_global_no_cadastro_aguardando_localizacao_limpa_sessao_sem
     SeedService(db_session).seed_contentores_iniciais()
     router = WhatsappRouterAgent(db_session)
 
-    router.handle(text_message("novo", telefone="351900001021"))
+    iniciar_cadastro_legado(router, "351900001021")
     router.handle(text_message("1", telefone="351900001021"))
     router.handle(
         NormalizedWhatsAppMessage(
@@ -569,7 +580,7 @@ def test_cancelamento_global_com_zero_no_cadastro_aguardando_localizacao(db_sess
     SeedService(db_session).seed_contentores_iniciais()
     router = WhatsappRouterAgent(db_session)
 
-    router.handle(text_message("novo", telefone="351900001022"))
+    iniciar_cadastro_legado(router, "351900001022")
     router.handle(text_message("1", telefone="351900001022"))
     router.handle(
         NormalizedWhatsAppMessage(

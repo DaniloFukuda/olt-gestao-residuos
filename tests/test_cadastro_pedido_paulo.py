@@ -46,9 +46,20 @@ def liberar_operadores(monkeypatch):
     )
     monkeypatch.setattr(operador_service_module, "get_settings", lambda: settings)
 
+def iniciar_cadastro_legado(router, telefone):
+    """Abre o cadastro unitário legado (AluguerAgent).
+
+    "novo" passou a abrir o Novo Pedido V24; o fluxo legado só continua a
+    atender conversas que já estavam nele, por isso os testes dele o abrem
+    diretamente.
+    """
+    conversa = router._get_or_create_conversa(telefone)
+    return router.aluguer_agent.start(conversa)
+
+
 
 def avancar_ate_valor(router: WhatsappRouterAgent, telefone: str = "351900009000"):
-    router.handle(text_message("novo", telefone=telefone))
+    iniciar_cadastro_legado(router, telefone)
     router.handle(text_message("Cliente Pedido", telefone=telefone))
     router.handle(text_message("+351 912 345 678", telefone=telefone))
     router.handle(text_message("1", telefone=telefone))
@@ -64,7 +75,7 @@ def test_cadastro_pedido_atendente_salva_entrega_pendente_sem_foto_ou_gps_real(d
     responses = []
     telefone = "351900009000"
 
-    responses.append(router.handle(text_message("novo", telefone=telefone)))
+    responses.append(iniciar_cadastro_legado(router, telefone))
     states.append(db_session.query(ConversaWhatsApp).filter_by(telefone=telefone).one().estado_atual)
     responses.append(router.handle(text_message("Cliente Pedido", telefone=telefone)))
     states.append(db_session.query(ConversaWhatsApp).filter_by(telefone=telefone).one().estado_atual)
