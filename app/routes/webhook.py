@@ -1,6 +1,8 @@
+import hashlib
+import hmac
 import logging
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from fastapi.responses import PlainTextResponse
 from sqlalchemy.orm import Session
 
@@ -14,9 +16,45 @@ from app.services.webhook_dedup_service import WebhookDedupService
 router = APIRouter(prefix="/webhook", tags=["webhook"])
 logger = logging.getLogger(__name__)
 
+ROUTER_FAILURE_MESSAGE = (
+    "⚠️ Não foi possível processar a sua mensagem agora. "
+    "Tente novamente ou envie menu para recomeçar."
+)
+_aviso_assinatura_emitido = False
+
 
 def _before_send() -> None:
     """Fronteira explícita entre o processamento inbound e o envio outbound."""
+
+
+async def _assinatura_meta_validada(request: Request) -> bool:
+    """Valida X-Hub-Signature-256 quando WHATSAPP_APP_SECRET está configurado.
+
+    Sem o segredo, o endpoint mantém o comportamento anterior e aceita
+    qualquer POST: nesse modo, quem conhece a URL pode se passar por um
+    operador autorizado apenas informando o telefone no payload.
+    """
+    global _aviso_assinatura_emitido
+    app_secret = get_settings().whatsapp_app_secret.strip()
+    if not app_secret:
+        if not _aviso_assinatura_emitido:
+            logger.warning("WHATSAPP_APP_SECRET ausente: assinatura da Meta não é verificada")
+            _aviso_assinatura_emitido = True
+        return False
+    esperado = "sha256=" + hmac.new(
+        app_secret.encode("utf-8"), await request.body(), hashlib.sha256
+    ).hexdigest()
+    recebido = request.headers.get("x-hub-signature-256", "")
+    if not hmac.compare_digest(esperado.encode("utf-8"), recebido.encode("utf-8")):
+        raise HTTPException(status_code=401, detail="Invalid signature")
+    return True
+
+
+def _avisar_falha(telefone: str, force_mock: bool, log_key: str) -> None:
+    try:
+        send_whatsapp_message(telefone, ROUTER_FAILURE_MESSAGE, force_mock=force_mock)
+    except Exception as exc:
+        logger.error("Webhook failure notice send failed key=%s error=%s", log_key, type(exc).__name__)
 
 
 @router.get("/whatsapp", response_class=PlainTextResponse)
@@ -36,11 +74,16 @@ def receive_whatsapp_webhook(
     payload: dict,
     db: Session = Depends(get_db),
     x_olt_mock_whatsapp: str | None = Header(default=None),
+    assinatura_validada: bool = Depends(_assinatura_meta_validada),
 ) -> dict:
     processed = 0
     ignored = 0
     failed = 0
-    force_mock = (x_olt_mock_whatsapp or "").strip().lower() in {"1", "true", "yes", "sim"}
+    # O cabeçalho de mock existe para os scripts locais; com a assinatura
+    # ativa ele seria só um meio de silenciar as respostas ao operador real.
+    force_mock = not assinatura_validada and (
+        (x_olt_mock_whatsapp or "").strip().lower() in {"1", "true", "yes", "sim"}
+    )
     messages = parse_whatsapp_payload(payload)
     for message in messages:
         dedup = WebhookDedupService(db)
@@ -84,6 +127,7 @@ def receive_whatsapp_webhook(
                 db.rollback()
                 logger.error("Webhook definitive mark failed key=%s error=%s", log_key, type(mark_exc).__name__)
             logger.error("Webhook router failed key=%s error=%s", log_key, type(exc).__name__)
+            _avisar_falha(message.telefone, force_mock, log_key)
             failed += 1
             continue
 

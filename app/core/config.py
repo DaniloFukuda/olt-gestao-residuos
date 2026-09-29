@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     media_dir: str = "./media"
 
     whatsapp_verify_token: str = "troque_este_token"
+    whatsapp_app_secret: str = ""
     whatsapp_access_token: str = ""
     whatsapp_phone_number_id: str = ""
     whatsapp_business_account_id: str = ""
