@@ -23,20 +23,33 @@ class NormalizedWhatsAppMessage:
 
 def parse_whatsapp_payload(payload: dict[str, Any]) -> list[NormalizedWhatsAppMessage]:
     messages: list[NormalizedWhatsAppMessage] = []
-    for entry in payload.get("entry", []):
-        for change in entry.get("changes", []):
-            value = change.get("value", {})
-            for message in value.get("messages", []):
+    for entry in _dicts(payload.get("entry")):
+        for change in _dicts(entry.get("changes")):
+            value = change.get("value")
+            if not isinstance(value, dict):
+                continue
+            for message in _dicts(value.get("messages")):
                 normalized = _parse_message(message)
                 if normalized:
                     messages.append(normalized)
     return messages
 
 
+def _dicts(value: Any) -> list[dict[str, Any]]:
+    """Ignora estruturas inesperadas em vez de derrubar o webhook com 500."""
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, dict)]
+
+
+def _dict(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
 def _parse_message(message: dict[str, Any]) -> NormalizedWhatsAppMessage | None:
     telefone = message.get("from")
     tipo = message.get("type")
-    if not telefone or not tipo:
+    if not isinstance(telefone, str) or not telefone or not isinstance(tipo, str) or not tipo:
         return None
 
     data: dict[str, Any] = {
@@ -47,9 +60,9 @@ def _parse_message(message: dict[str, Any]) -> NormalizedWhatsAppMessage | None:
     }
 
     if tipo == "text":
-        data["texto"] = message.get("text", {}).get("body")
+        data["texto"] = _dict(message.get("text")).get("body")
     elif tipo == "location":
-        location = message.get("location", {})
+        location = _dict(message.get("location"))
         data["latitude"] = location.get("latitude")
         data["longitude"] = location.get("longitude")
         data["location_name"] = _clean_text(location.get("name"))
@@ -61,13 +74,13 @@ def _parse_message(message: dict[str, Any]) -> NormalizedWhatsAppMessage | None:
             data["location_address"],
         )
     elif tipo in {"image", "document"}:
-        media = message.get(tipo, {})
+        media = _dict(message.get(tipo))
         data["media_id"] = media.get("id")
         data["mime_type"] = media.get("mime_type")
         data["filename"] = media.get("filename")
     elif tipo == "interactive":
-        interactive = message.get("interactive", {})
-        reply = interactive.get("button_reply") or interactive.get("list_reply") or {}
+        interactive = _dict(message.get("interactive"))
+        reply = _dict(interactive.get("button_reply") or interactive.get("list_reply"))
         data["texto"] = _interactive_reply_text(reply)
     elif tipo in {"contact", "contacts", "vcard"}:
         contact = _first_contact(message)

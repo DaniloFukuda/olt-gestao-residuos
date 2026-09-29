@@ -283,3 +283,24 @@ def test_payload_contacts_usa_primeiro_phone_quando_nao_ha_wa_id():
 
     assert messages[0].contact_name == "Empresa Cliente"
     assert messages[0].contact_phone == "+351 914 000 222"
+
+
+def test_payload_malformado_nao_derruba_o_webhook():
+    payloads = [
+        {"entry": "x"},
+        {"entry": ["x", {"changes": "y"}]},
+        {"entry": [{"changes": [{"value": "z"}]}]},
+        {"entry": [{"changes": [{"value": {"messages": ["m", None]}}]}]},
+        {"entry": [{"changes": [{"value": {"messages": [
+            {"from": "351900000000", "id": "a", "type": "text", "text": "nao-dict"},
+            {"from": "351900000000", "id": "b", "type": "interactive", "interactive": {"button_reply": "x"}},
+            {"from": "351900000000", "id": "c", "type": "location", "location": None},
+            {"from": 351900000000, "id": "d", "type": "text", "text": {"body": "oi"}},
+        ]}}]}]},
+    ]
+
+    parsed = [parse_whatsapp_payload(payload) for payload in payloads]
+
+    assert parsed[:4] == [[], [], [], []]
+    assert [m.message_id for m in parsed[4]] == ["a", "b", "c"]
+    assert all(m.texto is None for m in parsed[4])
