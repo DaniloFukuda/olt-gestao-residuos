@@ -263,7 +263,7 @@ def test_correcao_com_12_opcoes_vai_como_texto_e_permite_responder_9(db_session,
     # envio como lista era sempre recusado e só então caía para texto.
     monkeypatch.setenv("ENV", "development")
     monkeypatch.setenv("WHATSAPP_ACCESS_TOKEN", "fake-token")
-    monkeypatch.setenv("WHATSAPP_PHONE_NUMBER_ID", "1148807428322172")
+    monkeypatch.setenv("WHATSAPP_PHONE_NUMBER_ID", "100000000000002")
     monkeypatch.setenv("WHATSAPP_API_VERSION", "v25.0")
     get_settings.cache_clear()
     calls = []
@@ -354,7 +354,7 @@ def test_falha_http_lista_recolha_envia_fallback_e_numero_avanca_fluxo(db_sessio
     _liberar_operadores(monkeypatch)
     monkeypatch.setenv("ENV", "development")
     monkeypatch.setenv("WHATSAPP_ACCESS_TOKEN", "fake-token")
-    monkeypatch.setenv("WHATSAPP_PHONE_NUMBER_ID", "1148807428322172")
+    monkeypatch.setenv("WHATSAPP_PHONE_NUMBER_ID", "100000000000002")
     monkeypatch.setenv("WHATSAPP_API_VERSION", "v25.0")
     get_settings.cache_clear()
     calls = []

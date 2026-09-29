@@ -20,16 +20,16 @@ def test_env_test_forca_envio_mock(monkeypatch):
     monkeypatch.setenv("WHATSAPP_PHONE_NUMBER_ID", "123456")
     get_settings.cache_clear()
 
-    result = send_text_message("556198266551", "Ola")
+    result = send_text_message("351900000001", "Ola")
 
-    assert result == {"to": "556198266551", "body": "Ola", "status": "mocked"}
+    assert result == {"to": "351900000001", "body": "Ola", "status": "mocked"}
 
 
 def test_envio_real_simulado_com_sucesso(monkeypatch):
     clear_settings(monkeypatch)
     monkeypatch.setenv("ENV", "development")
     monkeypatch.setenv("WHATSAPP_ACCESS_TOKEN", "fake-token")
-    monkeypatch.setenv("WHATSAPP_PHONE_NUMBER_ID", "1148807428322172")
+    monkeypatch.setenv("WHATSAPP_PHONE_NUMBER_ID", "100000000000002")
     monkeypatch.setenv("WHATSAPP_API_VERSION", "v25.0")
     get_settings.cache_clear()
     calls = []
@@ -40,22 +40,22 @@ def test_envio_real_simulado_com_sucesso(monkeypatch):
 
     monkeypatch.setattr(httpx, "post", fake_post)
 
-    result = send_text_message("556198266551", "Mensagem real simulada")
+    result = send_text_message("351900000001", "Mensagem real simulada")
 
     assert result == {
-        "to": "556198266551",
+        "to": "351900000001",
         "body": "Mensagem real simulada",
         "status": "sent",
         "message_id": "wamid.fake",
     }
-    assert calls[0]["url"] == "https://graph.facebook.com/v25.0/1148807428322172/messages"
+    assert calls[0]["url"] == "https://graph.facebook.com/v25.0/100000000000002/messages"
     assert calls[0]["headers"] == {
         "Authorization": "Bearer fake-token",
         "Content-Type": "application/json",
     }
     assert calls[0]["json"] == {
         "messaging_product": "whatsapp",
-        "to": "556198266551",
+        "to": "351900000001",
         "type": "text",
         "text": {"body": "Mensagem real simulada"},
     }
@@ -66,7 +66,7 @@ def test_erro_http_da_meta_retorna_status_e_resposta_sem_token(monkeypatch, capl
     token = "super-secret-token"
     monkeypatch.setenv("ENV", "development")
     monkeypatch.setenv("WHATSAPP_ACCESS_TOKEN", token)
-    monkeypatch.setenv("WHATSAPP_PHONE_NUMBER_ID", "1148807428322172")
+    monkeypatch.setenv("WHATSAPP_PHONE_NUMBER_ID", "100000000000002")
     get_settings.cache_clear()
 
     def fake_post(url, headers, json, timeout):
@@ -78,7 +78,7 @@ def test_erro_http_da_meta_retorna_status_e_resposta_sem_token(monkeypatch, capl
     monkeypatch.setattr(httpx, "post", fake_post)
 
     with caplog.at_level(logging.ERROR):
-        result = send_text_message("556198266551", "Mensagem")
+        result = send_text_message("351900000001", "Mensagem")
 
     assert result["status"] == "error"
     assert result["status_code"] == 400
@@ -94,7 +94,7 @@ def test_modo_mock_quando_config_incompleta(monkeypatch):
     monkeypatch.setenv("WHATSAPP_PHONE_NUMBER_ID", "")
     get_settings.cache_clear()
 
-    result = send_text_message("556198266551", "Ola")
+    result = send_text_message("351900000001", "Ola")
 
     assert result["status"] == "mocked"
 
@@ -103,7 +103,7 @@ def test_force_mock_impede_envio_real(monkeypatch):
     clear_settings(monkeypatch)
     monkeypatch.setenv("ENV", "development")
     monkeypatch.setenv("WHATSAPP_ACCESS_TOKEN", "fake-token")
-    monkeypatch.setenv("WHATSAPP_PHONE_NUMBER_ID", "1148807428322172")
+    monkeypatch.setenv("WHATSAPP_PHONE_NUMBER_ID", "100000000000002")
     get_settings.cache_clear()
 
     def fake_post(*args, **kwargs):
@@ -111,18 +111,18 @@ def test_force_mock_impede_envio_real(monkeypatch):
 
     monkeypatch.setattr(httpx, "post", fake_post)
 
-    result = send_text_message("556198266551", "Mensagem", force_mock=True)
+    result = send_text_message("351900000001", "Mensagem", force_mock=True)
 
-    assert result == {"to": "556198266551", "body": "Mensagem", "status": "mocked"}
+    assert result == {"to": "351900000001", "body": "Mensagem", "status": "mocked"}
 
 
 def test_send_whatsapp_message_usa_botoes_para_sim_nao_em_mock(monkeypatch):
     clear_settings(monkeypatch)
 
-    result = send_whatsapp_message("556198266551", "Deseja continuar?\n\n1. Sim\n2. Nao")
+    result = send_whatsapp_message("351900000001", "Deseja continuar?\n\n1. Sim\n2. Nao")
 
     assert result == {
-        "to": "556198266551",
+        "to": "351900000001",
         "body": "Deseja continuar?",
         "status": "mocked",
         "type": "interactive",
@@ -135,7 +135,7 @@ def test_send_whatsapp_message_usa_ids_especificos_para_mao_de_obra(monkeypatch)
     clear_settings(monkeypatch)
 
     result = send_whatsapp_message(
-        "556198266551",
+        "351900000001",
         "Este pedido necessita de mão de obra?\n\n1. Sim\n2. Não",
     )
 
@@ -150,7 +150,7 @@ def test_send_whatsapp_message_usa_ids_especificos_para_residuo_contentor(monkey
     clear_settings(monkeypatch)
 
     result = send_whatsapp_message(
-        "556198266551",
+        "351900000001",
         "Resíduo do contentor 1/3:\n\n1. Entulho Limpo\n2. Entulho Misto",
     )
 
@@ -164,10 +164,10 @@ def test_send_whatsapp_message_usa_ids_especificos_para_residuo_contentor(monkey
 def test_send_whatsapp_message_usa_botoes_para_duas_opcoes_genericas(monkeypatch):
     clear_settings(monkeypatch)
 
-    result = send_whatsapp_message("556198266551", "Qual a forma?\n\n1. MBWay\n2. Transferencia")
+    result = send_whatsapp_message("351900000001", "Qual a forma?\n\n1. MBWay\n2. Transferencia")
 
     assert result == {
-        "to": "556198266551",
+        "to": "351900000001",
         "body": "Qual a forma?",
         "status": "mocked",
         "type": "interactive",
@@ -180,7 +180,7 @@ def test_send_whatsapp_message_envia_payload_interactive_para_duas_opcoes(monkey
     clear_settings(monkeypatch)
     monkeypatch.setenv("ENV", "development")
     monkeypatch.setenv("WHATSAPP_ACCESS_TOKEN", "fake-token")
-    monkeypatch.setenv("WHATSAPP_PHONE_NUMBER_ID", "1148807428322172")
+    monkeypatch.setenv("WHATSAPP_PHONE_NUMBER_ID", "100000000000002")
     get_settings.cache_clear()
     calls = []
 
@@ -190,7 +190,7 @@ def test_send_whatsapp_message_envia_payload_interactive_para_duas_opcoes(monkey
 
     monkeypatch.setattr(httpx, "post", fake_post)
 
-    result = send_whatsapp_message("556198266551", "Deseja adicionar mais uma foto?\n\n1. Sim\n2. Nao")
+    result = send_whatsapp_message("351900000001", "Deseja adicionar mais uma foto?\n\n1. Sim\n2. Nao")
 
     assert result["status"] == "sent"
     assert result["message_id"] == "wamid.button"
@@ -209,10 +209,10 @@ def test_send_whatsapp_message_usa_botoes_quando_tiver_tres_opcoes(monkeypatch):
     clear_settings(monkeypatch)
 
     body = "Quando sera a entrega?\n\n1. Hoje\n2. Amanha\n3. Outra data"
-    result = send_whatsapp_message("556198266551", body)
+    result = send_whatsapp_message("351900000001", body)
 
     assert result == {
-        "to": "556198266551",
+        "to": "351900000001",
         "body": "Quando sera a entrega?",
         "status": "mocked",
         "type": "interactive",
@@ -231,10 +231,10 @@ def test_send_whatsapp_message_titulo_longo_vira_lista_sem_cortar_texto(monkeypa
     clear_settings(monkeypatch)
 
     body = "Escolha uma opcao\n\n1. Botao com titulo muito grande\n2. Opcao curta"
-    result = send_whatsapp_message("556198266551", body)
+    result = send_whatsapp_message("351900000001", body)
 
     assert result == {
-        "to": "556198266551",
+        "to": "351900000001",
         "body": "Escolha uma opcao",
         "status": "mocked",
         "type": "interactive",
@@ -254,7 +254,7 @@ def test_send_whatsapp_message_faz_fallback_para_texto_quando_interativo_falha(m
     clear_settings(monkeypatch)
     monkeypatch.setenv("ENV", "development")
     monkeypatch.setenv("WHATSAPP_ACCESS_TOKEN", "fake-token")
-    monkeypatch.setenv("WHATSAPP_PHONE_NUMBER_ID", "1148807428322172")
+    monkeypatch.setenv("WHATSAPP_PHONE_NUMBER_ID", "100000000000002")
     get_settings.cache_clear()
     calls = []
 
@@ -267,12 +267,12 @@ def test_send_whatsapp_message_faz_fallback_para_texto_quando_interativo_falha(m
     monkeypatch.setattr(httpx, "post", fake_post)
 
     original_body = "Deseja continuar?\n\n1. Sim\n2. Nao"
-    result = send_whatsapp_message("556198266551", original_body)
+    result = send_whatsapp_message("351900000001", original_body)
 
     assert calls[0]["type"] == "interactive"
     assert calls[1] == {
         "messaging_product": "whatsapp",
-        "to": "556198266551",
+        "to": "351900000001",
         "type": "text",
         "text": {"body": original_body},
     }

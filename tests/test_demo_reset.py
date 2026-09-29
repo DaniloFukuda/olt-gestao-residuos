@@ -15,7 +15,7 @@ def test_reset_recoloca_contentores_como_disponivel(db_session):
         forma_pagamento="transferencia",
         pago=True,
     )
-    db_session.add(ConversaWhatsApp(telefone="556198266551", estado_atual="confirmado", contexto_json={}))
+    db_session.add(ConversaWhatsApp(telefone="351900000001", estado_atual="confirmado", contexto_json={}))
     db_session.commit()
 
     assert aluguer.contentor.status == StatusContentor.ALUGADO

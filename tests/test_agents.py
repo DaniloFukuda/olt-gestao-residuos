@@ -1365,7 +1365,7 @@ def test_whatsapp_client_mock_retorna_mensagem_enviada(monkeypatch):
 
 
 def test_normalizacao_de_telefone():
-    assert normalize_phone("+55 (61) 98266-551") == "556198266551"
+    assert normalize_phone("+351 (900) 000-001") == "351900000001"
     assert normalize_phone(" 351-912 345 678 ") == "351912345678"
     assert normalize_phone(None) == ""
 
@@ -1378,30 +1378,30 @@ def test_telefone_portugal_e_link_wa_me():
 
 
 def test_autorizacao_com_authorized_operator_phone(db_session, monkeypatch):
-    monkeypatch.setenv("AUTHORIZED_OPERATOR_PHONE", "+55 (61) 98266-551")
+    monkeypatch.setenv("AUTHORIZED_OPERATOR_PHONE", "+351 (900) 000-001")
     monkeypatch.setenv("AUTHORIZED_OPERATOR_PHONES", "")
     monkeypatch.setenv("WHATSAPP_OWNER_PHONE", "")
     monkeypatch.setenv("OWNER_WHATSAPP", "")
     get_settings.cache_clear()
 
-    assert WhatsappRouterAgent(db_session)._is_authorized("556198266551") is True
+    assert WhatsappRouterAgent(db_session)._is_authorized("351900000001") is True
 
 
 def test_autorizacao_com_authorized_operator_phones(db_session, monkeypatch):
     monkeypatch.setenv("AUTHORIZED_OPERATOR_PHONE", "")
-    monkeypatch.setenv("AUTHORIZED_OPERATOR_PHONES", "+55 (61) 98266-551, 351-912345678")
+    monkeypatch.setenv("AUTHORIZED_OPERATOR_PHONES", "+351 (900) 000-001, 351-912345678")
     monkeypatch.setenv("WHATSAPP_OWNER_PHONE", "")
     monkeypatch.setenv("OWNER_WHATSAPP", "")
     get_settings.cache_clear()
 
     router = WhatsappRouterAgent(db_session)
 
-    assert router._is_authorized("556198266551") is True
+    assert router._is_authorized("351900000001") is True
     assert router._is_authorized("+351 912 345 678") is True
 
 
 def test_numero_nao_autorizado(db_session, monkeypatch):
-    monkeypatch.setenv("AUTHORIZED_OPERATOR_PHONE", "556198266551")
+    monkeypatch.setenv("AUTHORIZED_OPERATOR_PHONE", "351900000001")
     monkeypatch.setenv("AUTHORIZED_OPERATOR_PHONES", "")
     monkeypatch.setenv("WHATSAPP_OWNER_PHONE", "")
     monkeypatch.setenv("OWNER_WHATSAPP", "")
@@ -1413,15 +1413,15 @@ def test_numero_nao_autorizado(db_session, monkeypatch):
 
 
 def test_mensagem_novo_de_operador_autorizado_inicia_fluxo(db_session, monkeypatch):
-    monkeypatch.setenv("AUTHORIZED_OPERATOR_PHONE", "+55 (61) 98266-551")
+    monkeypatch.setenv("AUTHORIZED_OPERATOR_PHONE", "+351 (900) 000-001")
     monkeypatch.setenv("AUTHORIZED_OPERATOR_PHONES", "")
     monkeypatch.setenv("WHATSAPP_OWNER_PHONE", "")
     monkeypatch.setenv("OWNER_WHATSAPP", "")
     get_settings.cache_clear()
     SeedService(db_session).seed_contentores_iniciais()
 
-    response = WhatsappRouterAgent(db_session).handle(text_message("Novo", telefone="556198266551"))
-    conversa = db_session.query(ConversaWhatsApp).filter_by(telefone="556198266551").one()
+    response = WhatsappRouterAgent(db_session).handle(text_message("Novo", telefone="351900000001"))
+    conversa = db_session.query(ConversaWhatsApp).filter_by(telefone="351900000001").one()
 
     assert "Cadastro unitario iniciado para o contentor 1" in response
     assert "foto do contentor" in response

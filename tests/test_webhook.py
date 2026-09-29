@@ -51,7 +51,7 @@ def test_webhook_com_status_delivered_nao_envia_resposta(client, monkeypatch):
                                     "id": "wamid.fake",
                                     "status": "delivered",
                                     "timestamp": "1730000000",
-                                    "recipient_id": "556198266551",
+                                    "recipient_id": "351900000001",
                                 }
                             ]
                         }
@@ -72,20 +72,20 @@ def test_payload_fake_meta_e_parseado_corretamente():
         "object": "whatsapp_business_account",
         "entry": [
             {
-                "id": "1502228507690349",
+                "id": "100000000000001",
                 "changes": [
                     {
                         "field": "messages",
                         "value": {
                             "messaging_product": "whatsapp",
                             "metadata": {
-                                "display_phone_number": "556196870361",
-                                "phone_number_id": "1148807428322172",
+                                "display_phone_number": "351900000002",
+                                "phone_number_id": "100000000000002",
                             },
-                            "contacts": [{"profile": {"name": "Danilo Fukuda"}, "wa_id": "556198266551"}],
+                            "contacts": [{"profile": {"name": "Operador Teste"}, "wa_id": "351900000001"}],
                             "messages": [
                                 {
-                                    "from": "556198266551",
+                                    "from": "351900000001",
                                     "id": "wamid.fake",
                                     "timestamp": "1780000000",
                                     "type": "location",
@@ -107,7 +107,7 @@ def test_payload_fake_meta_e_parseado_corretamente():
     messages = parse_whatsapp_payload(payload)
 
     assert len(messages) == 1
-    assert messages[0].telefone == "556198266551"
+    assert messages[0].telefone == "351900000001"
     assert messages[0].tipo == "location"
     assert messages[0].latitude == 38.7223
     assert messages[0].longitude == -9.1393
@@ -127,7 +127,7 @@ def test_payload_interactive_button_reply_vira_texto_da_opcao():
                         "value": {
                             "messages": [
                                 {
-                                    "from": "556198266551",
+                                    "from": "351900000001",
                                     "id": "wamid.button",
                                     "type": "interactive",
                                     "interactive": {
@@ -146,7 +146,7 @@ def test_payload_interactive_button_reply_vira_texto_da_opcao():
     messages = parse_whatsapp_payload(payload)
 
     assert len(messages) == 1
-    assert messages[0].telefone == "556198266551"
+    assert messages[0].telefone == "351900000001"
     assert messages[0].tipo == "interactive"
     assert messages[0].texto == "1"
 
@@ -160,7 +160,7 @@ def test_payload_interactive_button_reply_preserva_id_especifico():
                         "value": {
                             "messages": [
                                 {
-                                    "from": "556198266551",
+                                    "from": "351900000001",
                                     "id": "wamid.button",
                                     "type": "interactive",
                                     "interactive": {
@@ -193,7 +193,7 @@ def test_payload_location_sem_coordenadas_validas_nao_gera_texto():
                         "value": {
                             "messages": [
                                 {
-                                    "from": "556198266551",
+                                    "from": "351900000001",
                                     "id": "wamid.location",
                                     "type": "location",
                                     "location": {"name": "Obra sem coordenadas"},
