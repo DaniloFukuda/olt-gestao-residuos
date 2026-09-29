@@ -3210,7 +3210,9 @@ def test_contentor_despejo_residuo_invalido_preserva_estado_contexto_e_mensagem(
     ["1", "sim", "Sim, corresponde", "✅ Sim, corresponde", "Sim, tudo certo"],
 )
 def test_contentor_despejo_conformidade_conforme_preserva_aliases(entrada):
-    contexto = _contexto_despejo_moderno(residuo_assumido="Entulho Misto")
+    contexto = _contexto_despejo_moderno(
+        residuo_contratado="Entulho Misto", residuo_assumido="Entulho Misto"
+    )
     decision = ContentorOperationalAgent(
         lambda: [], Mock()
     ).decide_despejo_conformidade(
@@ -3221,6 +3223,20 @@ def test_contentor_despejo_conformidade_conforme_preserva_aliases(entrada):
     assert decision.context["residuo_efetivo"] == "Entulho Misto"
     assert decision.context["carga_errada"] is False
     assert decision.context["relato_carga"] is None
+
+
+def test_contentor_despejo_conformidade_com_cota_de_outro_residuo_exige_relato():
+    contexto = _contexto_despejo_moderno(residuo_assumido="Entulho Misto")
+    decision = ContentorOperationalAgent(
+        lambda: [], Mock()
+    ).decide_despejo_conformidade(
+        SimpleNamespace(contexto_json=contexto), mensagem("sim")
+    )
+
+    assert decision.next_state == "v24_despejo_relato"
+    assert decision.context["residuo_efetivo"] == "Entulho Misto"
+    assert decision.context["carga_errada"] is True
+    assert "diferente do contratado para este equipamento (Entulho Limpo)" in decision.response
 
 
 @pytest.mark.parametrize(
@@ -4807,3 +4823,46 @@ def test_autorizacao_acontece_antes_do_seam(whatsapp_router, monkeypatch):
 
     assert router.handle(mensagem("1")) == "Telefone não autorizado."
     assert spy.calls == []
+
+
+def _contexto_despejo_carrinha(**extra):
+    ctx = {
+        "pedido_id": 17, "contentor_id": 5, "fotos_despejo": [],
+        "residuo_contratado": "Entulho Limpo", "residuo_efetivo": None,
+        "residuo_assumido": None, "carga_errada": False, "relato_carga": None,
+        "residuos_disponiveis": ["Entulho Limpo", "Entulho Misto"],
+    }
+    ctx.update(extra)
+    return SimpleNamespace(contexto_json=ctx)
+
+
+def test_despejo_carrinha_residuo_diferente_do_contratado_exige_relato():
+    decision = CarrinhaOperationalAgent().decide_despejo_residuo(
+        _contexto_despejo_carrinha(), mensagem("despejo_residuo:misto")
+    )
+
+    assert decision.next_state == "v24_despejo_relato"
+    assert decision.context["residuo_efetivo"] == "Entulho Misto"
+    assert decision.context["carga_errada"] is True
+    assert "diferente do contratado" in decision.response
+
+
+def test_despejo_carrinha_conformidade_com_cota_de_outro_residuo_exige_relato():
+    decision = CarrinhaOperationalAgent().decide_despejo_conformidade(
+        _contexto_despejo_carrinha(residuo_assumido="Entulho Misto"),
+        mensagem("despejo_conformidade:sim"),
+    )
+
+    assert decision.next_state == "v24_despejo_relato"
+    assert decision.context["residuo_efetivo"] == "Entulho Misto"
+    assert decision.context["carga_errada"] is True
+
+
+def test_despejo_carrinha_residuo_igual_ao_contratado_segue_para_foto():
+    decision = CarrinhaOperationalAgent().decide_despejo_residuo(
+        _contexto_despejo_carrinha(), mensagem("despejo_residuo:limpo")
+    )
+
+    assert decision.context["carga_errada"] is False
+    assert decision.context["residuo_efetivo"] == "Entulho Limpo"
+    assert not hasattr(decision, "next_state")

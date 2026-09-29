@@ -5,6 +5,7 @@ import unicodedata
 from dataclasses import dataclass
 from typing import Any
 
+from app.agents.pedido_v24.despejo import divergencia_residuo_prompt
 from app.agents.pedido_v24.transitions import AdvanceTransition, IdleTransition
 
 
@@ -294,6 +295,10 @@ class CarrinhaOperationalAgent:
             residue = next((item for item in available if self._normalize(item) == choice), None)
         if not residue:
             return "Selecione um tipo de resíduo com cota em aberto."
+        contratado = ctx.get("residuo_contratado")
+        if contratado and residue != contratado:
+            ctx.update({"residuo_efetivo": residue, "carga_errada": True, "relato_carga": None})
+            return AdvanceTransition("v24_despejo_relato", ctx, divergencia_residuo_prompt(residue, contratado))
         ctx.update({"residuo_efetivo": residue, "carga_errada": False, "relato_carga": None})
         return PrepararFotoDespejoCarrinha(ctx)
 
@@ -305,8 +310,14 @@ class CarrinhaOperationalAgent:
         elif choice == "despejo_conformidade:nao":
             choice = "2"
         if choice in {"1", "sim", "sim, corresponde", "✅ sim, corresponde", "sim, tudo certo", "✅ sim, tudo certo"}:
+            efetivo = ctx.get("residuo_assumido") or ctx["residuo_contratado"]
+            if efetivo != ctx["residuo_contratado"]:
+                ctx.update({"residuo_efetivo": efetivo, "carga_errada": True, "relato_carga": None})
+                return AdvanceTransition(
+                    "v24_despejo_relato", ctx, divergencia_residuo_prompt(efetivo, ctx["residuo_contratado"])
+                )
             ctx.update({
-                "residuo_efetivo": ctx.get("residuo_assumido") or ctx["residuo_contratado"],
+                "residuo_efetivo": efetivo,
                 "carga_errada": False,
                 "relato_carga": None,
             })

@@ -7,6 +7,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from sqlalchemy.orm import Session
 
+from app.agents.pedido_v24.despejo import divergencia_residuo_prompt
 from app.agents.pedido_v24.transitions import AdvanceTransition
 from app.agents.pedido_v24.contentor_cadastro import (
     CadastroModality,
@@ -867,8 +868,17 @@ class PedidoV24Agent:
                 residue = next((r for r in available if self._norm(r) == choice), None)
             if residue and "pedido_id" in ctx:
                 ctx["residuo_efetivo"] = residue
-                ctx["carga_errada"] = False
                 ctx["relato_carga"] = None
+                contratado = ctx.get("residuo_contratado")
+                if contratado and residue != contratado:
+                    ctx["carga_errada"] = True
+                    return self._advance(
+                        conversa,
+                        "v24_despejo_relato",
+                        ctx,
+                        divergencia_residuo_prompt(residue, contratado),
+                    )
+                ctx["carga_errada"] = False
                 return self._advance(conversa, "v24_despejo_foto", ctx, self._despejo_foto_prompt(ctx))
             if not residue:
                 return "Selecione um tipo de resíduo com cota em aberto."
@@ -882,8 +892,16 @@ class PedidoV24Agent:
                     choice = "2"
                 if choice in {"1", "sim", "sim, corresponde", "âœ… sim, corresponde", "sim, tudo certo", "âœ… sim, tudo certo"}:
                     ctx["residuo_efetivo"] = ctx.get("residuo_assumido") or ctx["residuo_contratado"]
-                    ctx["carga_errada"] = False
                     ctx["relato_carga"] = None
+                    if ctx["residuo_efetivo"] != ctx["residuo_contratado"]:
+                        ctx["carga_errada"] = True
+                        return self._advance(
+                            conversa,
+                            "v24_despejo_relato",
+                            ctx,
+                            divergencia_residuo_prompt(ctx["residuo_efetivo"], ctx["residuo_contratado"]),
+                        )
+                    ctx["carga_errada"] = False
                     return self._advance(conversa, "v24_despejo_foto", ctx, self._despejo_foto_prompt(ctx))
                 if choice in {"2", "nao", "nao, existe divergencia", "âŒ nao, existe divergencia", "nao, esta misturado/errado", "ðŸš¨ nao, esta misturado/errado"}:
                     ctx["carga_errada"] = True

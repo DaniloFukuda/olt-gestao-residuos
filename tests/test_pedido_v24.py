@@ -3013,3 +3013,82 @@ def test_cadastro_v24_erro_de_validacao_no_servico_responde_e_preserva_confirmac
     assert "300 caracteres" in response
     assert db_session.query(ConversaWhatsApp).one().estado_atual == "v24_cadastro_confirmacao"
     assert db_session.query(Pedido).count() == 0
+
+
+def _pedido_misto_recolhido(service):
+    pedido = service.criar(
+        nome_cliente="Cliente Troca",
+        telefone_cliente="351912345678",
+        data_planejada=datetime.now(timezone.utc),
+        valor_global="200",
+        pago=True,
+        forma_pagamento="MBWay",
+        pedido_feito_por="gestor",
+        endereco_aproximado="Rua",
+        ponto_referencia=None,
+        residuos=["Entulho Limpo", "Entulho Misto"],
+    )
+    limpo, misto = pedido.contentores
+    service.confirmar_entrega_lote(
+        pedido.id, "motorista", 38.7, -9.1, None,
+        [
+            {"contentor_id": limpo.id, "numero_adesivo": "7", "fotos": ["f7"]},
+            {"contentor_id": misto.id, "numero_adesivo": "8", "fotos": ["f8"]},
+        ],
+    )
+    service.confirmar_recolha(limpo.id, "motorista", False, None)
+    service.confirmar_recolha(misto.id, "motorista", False, None)
+    return pedido, limpo, misto
+
+
+def test_despejo_v24_residuo_diferente_do_contratado_pede_relato_e_conclui(db_session, monkeypatch):
+    """Antes, a divergência sem relato era rejeitada no serviço e o fluxo voltava em loop."""
+    liberar_operadores(monkeypatch)
+    service = PedidoService(db_session)
+    pedido, limpo, misto = _pedido_misto_recolhido(service)
+    router = WhatsappRouterAgent(db_session)
+
+    for item in ["4", "1", "1"]:
+        router.handle(msg(item))
+    pergunta = router.handle(msg("despejo_residuo:misto"))
+    router.handle(msg("cliente trocou os contentores na obra"))
+    router.handle(msg(kind="image", media="foto-7"))
+    confirmacao = router.handle(msg("2"))
+    primeiro = router.handle(msg("1"))
+
+    assert "diferente do contratado para este equipamento (Entulho Limpo)" in pergunta
+    assert "Relato: cliente trocou os contentores na obra" in confirmacao
+    assert "processado no vazadouro" in primeiro
+    db_session.refresh(limpo)
+    assert limpo.residuo_efetivo_vazadouro == "Entulho Misto"
+    assert limpo.carga_errada is True
+    assert limpo.status_ciclo == StatusCicloPedido.CONCLUIDO.value
+
+    router.handle(msg("1"))
+    pergunta_restante = router.handle(msg("despejo_conformidade:sim"))
+    router.handle(msg("contentor misto veio com entulho limpo"))
+    router.handle(msg(kind="image", media="foto-8"))
+    router.handle(msg("2"))
+    final = router.handle(msg("1"))
+
+    assert "diferente do contratado para este equipamento (Entulho Misto)" in pergunta_restante
+    assert "Pedido do cliente Cliente Troca concluído" in final
+    db_session.refresh(misto)
+    assert misto.residuo_efetivo_vazadouro == "Entulho Limpo"
+    assert misto.status_ciclo == StatusCicloPedido.CONCLUIDO.value
+
+
+def test_despejo_v24_residuo_igual_ao_contratado_segue_sem_relato(db_session, monkeypatch):
+    liberar_operadores(monkeypatch)
+    service = PedidoService(db_session)
+    pedido, limpo, _ = _pedido_misto_recolhido(service)
+    router = WhatsappRouterAgent(db_session)
+
+    for item in ["4", "1", "1"]:
+        router.handle(msg(item))
+    foto = router.handle(msg("despejo_residuo:limpo"))
+    router.handle(msg(kind="image", media="foto-7"))
+    confirmacao = router.handle(msg("2"))
+
+    assert "Envie a foto do despejo" in foto
+    assert "Divergencia: Nao" in confirmacao

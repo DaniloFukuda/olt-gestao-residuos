@@ -6,6 +6,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
+from app.agents.pedido_v24.despejo import divergencia_residuo_prompt
 from app.agents.pedido_v24.transitions import AdvanceTransition, IdleTransition
 from app.models.conversa import ConversaWhatsApp
 
@@ -434,8 +435,18 @@ class ContentorOperationalAgent:
         if not residue:
             return "Selecione um tipo de resíduo com cota em aberto."
         ctx["residuo_efetivo"] = residue
-        ctx["carga_errada"] = False
         ctx["relato_carga"] = None
+        contratado = ctx.get("residuo_contratado")
+        if contratado and residue != contratado:
+            # A confirmação trata resíduo diferente do contratado como divergência,
+            # que o PedidoService só aceita com relato.
+            ctx["carga_errada"] = True
+            return AdvanceTransition(
+                "v24_despejo_relato",
+                ctx,
+                divergencia_residuo_prompt(residue, contratado),
+            )
+        ctx["carga_errada"] = False
         return PrepararFotoDespejoContentor(ctx)
 
     def decide_despejo_conformidade(self, conversa, message):
@@ -453,8 +464,17 @@ class ContentorOperationalAgent:
             ctx["residuo_efetivo"] = (
                 ctx.get("residuo_assumido") or ctx["residuo_contratado"]
             )
-            ctx["carga_errada"] = False
             ctx["relato_carga"] = None
+            if ctx["residuo_efetivo"] != ctx["residuo_contratado"]:
+                ctx["carga_errada"] = True
+                return AdvanceTransition(
+                    "v24_despejo_relato",
+                    ctx,
+                    divergencia_residuo_prompt(
+                        ctx["residuo_efetivo"], ctx["residuo_contratado"]
+                    ),
+                )
+            ctx["carga_errada"] = False
             return PrepararFotoDespejoContentor(ctx)
         if choice in {
             "2", "nao", "nao, existe divergencia",
