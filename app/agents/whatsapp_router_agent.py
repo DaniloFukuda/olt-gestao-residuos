@@ -317,7 +317,7 @@ class WhatsappRouterAgent:
 
         if text in {"1", "novo pedido", "cadastrar pedido"}:
             if perfil == PerfilOperador.FUNCIONARIO:
-                return "Seu perfil de motorista nÃ£o possui permissÃ£o para cadastrar pedidos."
+                return "Seu perfil de motorista não possui permissão para cadastrar pedidos."
             return self.pedido_v24_router.start("cadastro", conversa)
         if text in {
             "2", "confirmar entrega de contentor", "confirmar entrega do lote",

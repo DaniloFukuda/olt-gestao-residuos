@@ -240,10 +240,7 @@ class TestMenuV4Opcao1NovoPedido:
 
         router = WhatsappRouterAgent(db_session)
         response = router.handle(msg("1", phone="351900010001"))
-        assert "perfil de motorista" in response.lower()
-        # Texto real: "não possui permissão" - matching flexível para encoding ascii
-        assert "permite" not in response.lower() or "não possui permiss" in response.lower()
-        assert "cadastrar pedidos" in response.lower()
+        assert response == "Seu perfil de motorista não possui permissão para cadastrar pedidos."
 
     def test_opcao_1_funcionario_nao_direciona_para_recolha_apenas_mensagem_erro(self, db_session, monkeypatch):
         """FUNCIONARIO que envia '1' recebe apenas mensagem de erro (não inicia recolha)."""
