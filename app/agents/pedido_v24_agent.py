@@ -526,6 +526,9 @@ class PedidoV24Agent:
                 ).first()
                 if duplicate:
                     return "Esse adesivo já está em um ciclo ativo."
+                erro_frota = self.service.erro_frota_entrega(number)
+                if erro_frota:
+                    return erro_frota
             entregas = list(ctx.get("entregas") or [])
             entregas.append(
                 {
@@ -1856,6 +1859,11 @@ class PedidoV24Agent:
             ),
             "status_entrega": contentor.status_entrega if contentor else None,
             "adesivo_em_ciclo_ativo": duplicate is not None,
+            "erro_frota": (
+                self.service.erro_frota_entrega(number)
+                if re.fullmatch(r"\d{1,6}", number) and number != "0"
+                else None
+            ),
         }
 
     def resolve_chegada_carrinha_selection(self, message, context):

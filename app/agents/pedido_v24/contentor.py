@@ -140,6 +140,8 @@ class ContentorOperationalAgent:
 
         if snapshot["adesivo_em_ciclo_ativo"]:
             return "Esse adesivo já está em um ciclo ativo."
+        if snapshot.get("erro_frota"):
+            return snapshot["erro_frota"]
 
         entregas = list(ctx.get("entregas") or [])
         entregas.append(

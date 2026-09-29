@@ -58,6 +58,7 @@ START_COMMANDS = {"iniciar", "cadastrar", "comecar", "começar", "novo"}
 ALTER_COMMANDS = {"alterar", "modificar"}
 CONTENTOR_STATUS_COMMANDS = {"alterar contentor", "alterar status", "status contentor"}
 DELETE_COMMANDS = {"excluir", "deletar"}
+CADASTRAR_CONTENTOR_RE = re.compile(r"(?:cadastrar|adicionar|novo) contentor (\S+)")
 CONTENTOR_DELETE_COMMANDS = {"apagar", "remover", "excluir contentor", "excluir contentores"}
 RENEW_COMMANDS = {"renovar", "prorrogar"}
 ENTREGA_COMMANDS = {"entrega", "entregar", "entrega de contentor", "confirmar entrega"}
@@ -283,6 +284,12 @@ class WhatsappRouterAgent:
             conversa.contexto_json = context
             return self.aluguer_agent.timeout_prompt(conversa)
 
+        cadastro_frota = CADASTRAR_CONTENTOR_RE.fullmatch(text)
+        if cadastro_frota:
+            if not self._can_execute_command(perfil, COMMAND_FAMILY_ADMIN_MUTATION):
+                return FORBIDDEN_MESSAGE
+            return self._cadastrar_contentor_frota(cadastro_frota.group(1), message.telefone)
+
         if text.startswith("resolver carga"):
             if not self._can_execute_command(perfil, COMMAND_FAMILY_RESOLUTION):
                 return FORBIDDEN_MESSAGE
@@ -392,6 +399,15 @@ class WhatsappRouterAgent:
                 return FORBIDDEN_MESSAGE
             return self.contentor_agent.listar_status()
         return self._initial_menu(perfil)
+
+    def _cadastrar_contentor_frota(self, numero: str, telefone: str) -> str:
+        try:
+            contentor, criado = self.pedido_service.cadastrar_contentor_frota(numero, telefone)
+        except ValueError as exc:
+            return str(exc)
+        if not criado:
+            return f"O contentor {contentor.codigo} já está na frota ({contentor.status.value})."
+        return f"✅ Contentor {contentor.codigo} cadastrado na frota como disponível."
 
     def _classify_top_level_command(self, text: str) -> str | None:
         if text in {"lista", "disponiveis", "contentores", "status", "resumo"}:
@@ -1707,6 +1723,7 @@ class WhatsappRouterAgent:
                 self.db.expire_all()
                 contentor = self.db.get(PedidoContentor, alvo_id)
                 self._registrar_auditoria_avaria_atual(contentor, telefone)
+                self.pedido_service.liberar_frota_apos_avaria(contentor)
                 equipamento = str(contentor.numero_adesivo_contentor or "não informado")
             else:
                 result = self.db.execute(

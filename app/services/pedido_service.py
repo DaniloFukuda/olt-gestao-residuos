@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session, joinedload
 from app.core.time import utcnow
 from app.core.config import get_settings
 from app.models.aluguer import ContentorFoto
+from app.models.contentor import Contentor, StatusContentor
 from app.models.pedido import (
     Pedido,
     PedidoContentor,
@@ -24,6 +25,7 @@ from app.models.pedido import (
     TipoFoto,
 )
 from app.models.operador import Operador, PerfilOperador
+from app.services.contentor_service import ContentorService
 
 
 RESIDUOS_CANONICOS = ("Entulho Limpo", "Entulho Misto")
@@ -448,6 +450,113 @@ class PedidoService:
         self.db.commit()
         return foto
 
+    # --- Frota -----------------------------------------------------------
+    # Regra de negócio: a entrega só aceita contentor cadastrado na frota
+    # (tabela ``contentores``) e disponível. A entrega marca-o como alugado;
+    # o despejo devolve-o a disponível, ou a manutenção quando a recolha
+    # registou avaria ainda pendente. Resolver a avaria devolve-o a
+    # disponível. Número novo precisa ser cadastrado antes pelo gestor
+    # ("cadastrar contentor N"). Com a frota vazia (instalações antigas e
+    # testes sem frota) a validação não se aplica.
+
+    def _frota_ativa(self) -> bool:
+        return (
+            self.db.query(Contentor.id).filter(Contentor.is_deleted.is_(False)).first()
+            is not None
+        )
+
+    @staticmethod
+    def _codigo_frota(numero: str | None) -> str:
+        numero = str(numero or "").strip()
+        return str(int(numero)) if numero.isdigit() else numero
+
+    def _contentor_frota(self, numero: str | None) -> Contentor | None:
+        return (
+            self.db.query(Contentor)
+            .filter(Contentor.codigo == self._codigo_frota(numero))
+            .filter(Contentor.is_deleted.is_(False))
+            .first()
+        )
+
+    def erro_frota_entrega(self, numero: str) -> str | None:
+        """Mensagem para o motorista quando o número não serve para a entrega."""
+        if not self._frota_ativa():
+            return None
+        codigo = self._codigo_frota(numero)
+        contentor = self._contentor_frota(codigo)
+        if not contentor:
+            return (
+                f"O contentor {codigo} não está cadastrado na frota. Confira o número "
+                f"ou peça ao gestor para o cadastrar (cadastrar contentor {codigo})."
+            )
+        if contentor.status == StatusContentor.DISPONIVEL:
+            return None
+        if contentor.status == StatusContentor.MANUTENCAO:
+            return (
+                f"O contentor {codigo} está em manutenção e não pode ser entregue. "
+                "Informe outro número."
+            )
+        return f"O contentor {codigo} já está alugado. Informe outro número."
+
+    def _ocupar_frota(self, numero: str) -> None:
+        if not self._frota_ativa():
+            return
+        erro = self.erro_frota_entrega(numero)
+        if erro:
+            raise ValueError(erro)
+        self._contentor_frota(numero).status = StatusContentor.ALUGADO
+
+    def _liberar_frota(self, item: PedidoContentor) -> None:
+        if item.tipo_equipamento != TipoEquipamentoPedido.CONTENTOR.value:
+            return
+        contentor = self._contentor_frota(item.numero_adesivo_contentor)
+        if not contentor or contentor.status not in {
+            StatusContentor.ALUGADO,
+            StatusContentor.AGUARDANDO_RECOLHA,
+            StatusContentor.MANUTENCAO,
+        }:
+            return
+        avaria_pendente = (
+            bool(item.contentor_avariado)
+            and item.status_resolucao_avaria == StatusResolucaoPedido.PENDENTE.value
+        )
+        contentor.status = (
+            StatusContentor.MANUTENCAO if avaria_pendente else StatusContentor.DISPONIVEL
+        )
+
+    def liberar_frota_apos_avaria(self, item: PedidoContentor | None) -> None:
+        """Depois de resolver a avaria, o contentor já despejado volta a disponível."""
+        if (
+            not item
+            or item.tipo_equipamento != TipoEquipamentoPedido.CONTENTOR.value
+            or item.status_ciclo != StatusCicloPedido.CONCLUIDO.value
+        ):
+            return
+        contentor = self._contentor_frota(item.numero_adesivo_contentor)
+        if contentor and contentor.status == StatusContentor.MANUTENCAO:
+            contentor.status = StatusContentor.DISPONIVEL
+
+    def cadastrar_contentor_frota(self, numero: str, operador: str | None = None) -> tuple[Contentor, bool]:
+        """Cadastra (ou reativa) um número na frota; devolve (contentor, criado)."""
+        codigo = ContentorService.validar_numero(self._codigo_frota(numero))
+        existente = self.db.query(Contentor).filter(Contentor.codigo == codigo).first()
+        if existente and not existente.is_deleted:
+            return existente, False
+        if existente:
+            existente.is_deleted = False
+            existente.status = StatusContentor.DISPONIVEL
+            existente.alterado_por_operador = operador
+            contentor = existente
+        else:
+            contentor = Contentor(
+                codigo=codigo,
+                status=StatusContentor.DISPONIVEL,
+                criado_por_operador=operador,
+            )
+            self.db.add(contentor)
+        self.db.commit()
+        return contentor, True
+
     def confirmar_entrega_lote(
         self,
         pedido_id: int,
@@ -658,6 +767,7 @@ class PedidoService:
             raise ValueError("Esta operação aceita apenas contentores.")
         if entrega:
             numero = str(entrega["numero_adesivo"]).strip()
+            self._ocupar_frota(numero)
             contentor.numero_adesivo_contentor = numero
         contentor.status_entrega = StatusEntregaPedido.ENTREGUE.value
         contentor.entrega_feita_por = operador
@@ -1178,6 +1288,7 @@ class PedidoService:
             contentor.despejo_feito_por = operador
             contentor.despejo_data_hora = utcnow()
             contentor.status_ciclo = StatusCicloPedido.CONCLUIDO.value
+            self._liberar_frota(contentor)
             if not _defer_commit:
                 self.db.commit()
         except Exception:
@@ -1195,6 +1306,7 @@ class PedidoService:
             contentor.status_resolucao_carga = StatusResolucaoPedido.RESOLVIDO.value
         elif tipo == "avaria":
             contentor.status_resolucao_avaria = StatusResolucaoPedido.RESOLVIDO.value
+            self.liberar_frota_apos_avaria(contentor)
         else:
             raise ValueError("Tipo de pendência inválido.")
         self.db.commit()

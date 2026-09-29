@@ -1443,6 +1443,8 @@ def test_adapter_adesivo_contentor_retorna_snapshot_simples_read_only(db_session
         "is_contentor": True,
         "status_entrega": "PENDENTE",
         "adesivo_em_ciclo_ativo": True,
+        # Frota vazia neste banco: a validação da frota não se aplica.
+        "erro_frota": None,
     }
     backend.db.get.assert_called_once()
     backend.db.commit.assert_not_called()
