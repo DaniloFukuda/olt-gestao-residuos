@@ -1,6 +1,7 @@
 """Seam de delegação para o backend legado do Pedido V24."""
 
 from datetime import datetime
+import unicodedata
 
 from sqlalchemy.orm import Session
 
@@ -46,6 +47,10 @@ from app.core.config import get_settings
 from app.integrations.whatsapp.parser import NormalizedWhatsAppMessage
 from app.models.conversa import ConversaWhatsApp
 from app.models.pedido import TipoEquipamentoPedido
+
+
+FOTO_STATES = {"v24_entrega_foto", "v24_recolha_foto", "v24_despejo_foto"}
+PROXIMO_PASSO_FOTO = {"2", "proximo passo", "➡️ proximo passo"}
 
 
 class PedidoV24OperationalRouter:
@@ -103,6 +108,33 @@ class PedidoV24OperationalRouter:
     def start_despejo(self, conversa: ConversaWhatsApp) -> str:
         return self._backend.start_despejo(conversa)
 
+    @staticmethod
+    def _avancar_foto_ja_enviada(conversa, message) -> None:
+        """"Próximo passo" no pedido de foto avança quando já há foto.
+
+        Depois de "1. Outra Foto" o motorista pode desistir da foto extra e
+        tocar "2. Próximo Passo"; antes isso respondia "Envie uma imagem" e
+        não havia saída. A conversa passa ao estado *_foto_acao, que trata
+        o "2" como sempre. Vale para contentor e carrinha (mesmos estados).
+        """
+        estado = getattr(conversa, "estado_atual", None)
+        if estado not in FOTO_STATES or message.tipo != "text":
+            return
+        normalized = unicodedata.normalize("NFKD", message.texto or "")
+        choice = "".join(c for c in normalized if not unicodedata.combining(c)).strip().lower()
+        if choice not in PROXIMO_PASSO_FOTO:
+            return
+        ctx = conversa.contexto_json or {}
+        if estado == "v24_entrega_foto":
+            entregas = ctx.get("entregas") or []
+            tem_foto = bool(entregas and isinstance(entregas[-1], dict) and entregas[-1].get("fotos"))
+        elif estado == "v24_recolha_foto":
+            tem_foto = bool(ctx.get("fotos_recolha"))
+        else:
+            tem_foto = bool(ctx.get("fotos_despejo"))
+        if tem_foto:
+            conversa.estado_atual = f"{estado}_acao"
+
     def entrega_confirmacao_prompt(self, context) -> str:
         return self._backend.entrega_confirmacao_prompt(context)
 
@@ -111,6 +143,7 @@ class PedidoV24OperationalRouter:
         conversa: ConversaWhatsApp,
         message: NormalizedWhatsAppMessage,
     ) -> str:
+        self._avancar_foto_ja_enviada(conversa, message)
         carrinha_response = self._handle_carrinha_cadastro(conversa, message)
         if carrinha_response is not None:
             return carrinha_response

@@ -3401,3 +3401,49 @@ def test_nao_continuar_retoma_cadastro_legado_com_pergunta(db_session, monkeypat
     assert "Operação retomada" in response
     assert "nome do cliente" in response
     assert db_session.query(ConversaWhatsApp).one().estado_atual == "aguardando_nome_cliente"
+
+
+def test_proximo_passo_depois_de_outra_foto_avanca_sem_nova_imagem(db_session, monkeypatch):
+    liberar_operadores(monkeypatch)
+    service = PedidoService(db_session)
+    pedido = service.criar(
+        nome_cliente="Cliente Foto Extra",
+        telefone_cliente="351912345678",
+        data_planejada=datetime.now(timezone.utc),
+        valor_global="100",
+        pago=True,
+        forma_pagamento="MBWay",
+        pedido_feito_por="gestor",
+        endereco_aproximado="Rua",
+        ponto_referencia=None,
+        residuos=["Entulho Limpo"],
+    )
+    router = WhatsappRouterAgent(db_session)
+
+    router.handle(msg("2"))
+    router.handle(msg("1"))
+    sem_foto = router.handle(msg("61"))
+    recusa = router.handle(msg("2"))
+    router.handle(msg(kind="image", media="foto-61"))
+    router.handle(msg("1"))
+    gps = router.handle(msg("2"))
+
+    assert "Envie a foto" in sem_foto
+    assert recusa == "Envie uma imagem para continuar."
+    assert db_session.query(ConversaWhatsApp).one().estado_atual == "v24_entrega_gps"
+    assert "localização" in gps.lower() or "gps" in gps.lower()
+
+    router.handle(msg(kind="location", lat=38.7, lon=-9.1))
+    router.handle(msg("Não"))
+    assert "Entrega confirmada" in router.handle(msg("1"))
+    item = pedido.contentores[0]
+    service.confirmar_recolha(item.id, "motorista", False, None)
+
+    for texto in ["4", "1", "1", "despejo_conformidade:sim"]:
+        router.handle(msg(texto))
+    router.handle(msg(kind="image", media="despejo-61"))
+    router.handle(msg("1"))
+    confirmacao = router.handle(msg("2"))
+
+    assert "Confirmar despejo" in confirmacao
+    assert db_session.query(ConversaWhatsApp).one().estado_atual == "v24_despejo_confirmacao"
