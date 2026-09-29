@@ -198,6 +198,14 @@ def test_ensure_alugueres_contentor_schema_migra_sqlite_antigo_sem_apagar_dados(
                 "pagamento_recebido_por FROM pedidos WHERE id = 1"
             )
         ).mappings().one()
+        whatsapp_queue_columns = {
+            row["name"]
+            for row in connection.execute(text("PRAGMA table_info(whatsapp_phone_queue)")).mappings()
+        }
+        whatsapp_queue_indexes = {
+            row["name"]
+            for row in connection.execute(text("PRAGMA index_list(whatsapp_phone_queue)")).mappings()
+        }
 
     assert {
         "email_cliente",
@@ -259,6 +267,18 @@ def test_ensure_alugueres_contentor_schema_migra_sqlite_antigo_sem_apagar_dados(
         "pagamento_recebido_em",
         "pagamento_recebido_por",
     } <= pedidos_columns
+    assert {
+        "id",
+        "phone_key",
+        "message_id",
+        "status",
+        "owner_token",
+        "criado_em",
+        "atualizado_em",
+        "lease_ate",
+    } <= whatsapp_queue_columns
+    assert "ix_whatsapp_phone_queue_phone_key" in whatsapp_queue_indexes
+    assert "ix_whatsapp_phone_queue_phone_status_id" in whatsapp_queue_indexes
     assert contentor_row["is_deleted"] == 0
     assert contentor_row["justificativa_exclusao"] is None
     assert pedido_row["precisa_mao_de_obra"] == 0

@@ -15,6 +15,8 @@ from app.models.pedido import (
     TipoFoto,
     TipoEquipamentoPedido,
 )
+from app.models.whatsapp_outbox import WhatsAppOutboxControl, WhatsAppOutboxMessage
+from app.models.whatsapp_phone_queue import WhatsAppPhoneQueueItem
 
 __all__ = [
     "AluguerContentor",
@@ -39,4 +41,7 @@ __all__ = [
     "StatusResolucaoPedido",
     "TipoFoto",
     "TipoEquipamentoPedido",
+    "WhatsAppOutboxControl",
+    "WhatsAppOutboxMessage",
+    "WhatsAppPhoneQueueItem",
 ]
