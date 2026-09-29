@@ -319,6 +319,8 @@ class AluguerService:
 
     def resolver_pendencia_carga(self, aluguer_id: int, operador_telefone: str | None = None) -> AluguerContentor:
         aluguer = self._get_or_raise(aluguer_id)
+        if aluguer.status_resolucao_carga != StatusResolucao.PENDENTE.value:
+            raise ValueError("Esse registro não possui pendência de carga ativa.")
         aluguer.status_resolucao_carga = StatusResolucao.RESOLVIDO.value
         self.alugueres.add_event(
             aluguer.id,
@@ -331,6 +333,8 @@ class AluguerService:
         if not get_settings().feature_avarias_enabled:
             raise ValueError("A funcionalidade de avarias não está disponível nesta empresa.")
         aluguer = self._get_or_raise(aluguer_id)
+        if aluguer.status_resolucao_avaria != StatusResolucao.PENDENTE.value:
+            raise ValueError("Esse registro não possui pendência de avaria ativa.")
         aluguer.status_resolucao_avaria = StatusResolucao.RESOLVIDO.value
         self.alugueres.add_event(
             aluguer.id,

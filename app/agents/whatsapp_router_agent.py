@@ -1420,6 +1420,20 @@ class WhatsappRouterAgent:
         alvo_id = int(match.group(1))
 
         contentor = self.db.get(PedidoContentor, alvo_id)
+        if contentor is not None and not contentor.contentor_avariado:
+            # IDs de pedido_contentores e alugueres_contentor colidem; o painel
+            # mostra "resolver avaria <id>" para os dois. Se o item do pedido
+            # nunca teve avaria, a pendência com esse número só pode ser a
+            # legada. (Item já resolvido continua sem fallback: ver
+            # test_id_atual_resolvido_nao_faz_fallback_para_legado.)
+            legado = self.db.get(AluguerContentor, alvo_id)
+            if (
+                legado is not None
+                and not legado.is_deleted
+                and legado.contentor_avariado
+                and legado.status_resolucao_avaria == StatusResolucao.PENDENTE.value
+            ):
+                contentor = None
         if contentor is not None:
             if contentor.status_resolucao_avaria == StatusResolucaoPedido.RESOLVIDO.value:
                 return self._mensagem_avaria_ja_resolvida("pedido", alvo_id)
