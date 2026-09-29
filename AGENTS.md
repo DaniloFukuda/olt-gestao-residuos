@@ -88,7 +88,7 @@ POST /webhook/whatsapp (app/routes/webhook.py)
 
 | Tema | Regra | Onde |
 |---|---|---|
-| Frota | Entrega só aceita contentor cadastrado e disponível; entrega → `alugado`; despejo → `disponível` ou `manutenção` se a recolha registou avaria pendente; resolver avaria → `disponível`. Número novo (1–99): gestor envia `cadastrar contentor N`. | `PedidoService.erro_frota_entrega`, `_ocupar_frota`, `_liberar_frota`, `cadastrar_contentor_frota` |
+| Frota | Entrega só aceita contentor cadastrado e disponível; entrega → `alugado`; despejo → `disponível` ou `manutenção` se a recolha registou avaria pendente; resolver avaria → `disponível`. Número novo (até 6 dígitos): gestor envia `cadastrar contentor N`. | `PedidoService.erro_frota_entrega`, `_ocupar_frota`, `_liberar_frota`, `cadastrar_contentor_frota` |
 | Resíduo real | O motorista informa o resíduo que caiu de fato; grava-se esse resíduo (mesmo sem cota) e abre pendência de carga com relato. | `pedido_v24/despejo.py`, `PedidoService._validar_cota_despejo` |
 | Divergência | Vale **o total do pedido**: contentores trocados dentro do pedido não são divergência. Só há divergência quando o motorista responde "Não" à conformidade. (Substitui a regra por contentor do hotfix `25d4762`.) | `pedido_v24/despejo.py`, `cotas_residuos` |
 | Cadastro | `novo`/`cadastrar`/`iniciar`/`começar` abrem o Novo Pedido (opção 1). `alugados`/`vencendo`/`atrasados` incluem pedidos V24. | `whatsapp_router_agent.py` |

@@ -25,7 +25,6 @@ from app.models.pedido import (
     TipoFoto,
 )
 from app.models.operador import Operador, PerfilOperador
-from app.services.contentor_service import ContentorService
 
 
 RESIDUOS_CANONICOS = ("Entulho Limpo", "Entulho Misto")
@@ -541,7 +540,13 @@ class PedidoService:
 
     def cadastrar_contentor_frota(self, numero: str, operador: str | None = None) -> tuple[Contentor, bool]:
         """Cadastra (ou reativa) um número na frota; devolve (contentor, criado)."""
-        codigo = ContentorService.validar_numero(self._codigo_frota(numero))
+        # Mesmo formato que a entrega aceita (até 6 dígitos, sem zero à
+        # esquerda); a regra 1-99 de ContentorService é do cadastro legado.
+        codigo = self._codigo_frota(numero)
+        if not re.fullmatch(r"[1-9]\d{0,5}", codigo):
+            raise ValueError(
+                "Número de contentor inválido. Informe só algarismos, de 1 a 999999."
+            )
         existente = self.db.query(Contentor).filter(Contentor.codigo == codigo).first()
         if existente and not existente.is_deleted:
             return existente, False

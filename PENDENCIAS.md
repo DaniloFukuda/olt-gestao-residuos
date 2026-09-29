@@ -45,9 +45,6 @@ suíte completa verde (1621 testes) e teste de ponta a ponta com 22 pedidos.
 4. **Menu "Corrigir" com 11–12 campos** (pedido pago, carrinha) vai como texto
    numerado, porque a lista do WhatsApp aceita no máximo 10 linhas. Aceitável,
    ou agrupar campos (ex.: "Pagamento") para voltar a caber numa lista?
-5. **Números de frota acima de 99:** `cadastrar contentor` aceita 1–99 (regra
-   que já existia em `ContentorService.validar_numero`). A empresa usa números
-   maiores?
 
 ## 4. Dívida técnica
 

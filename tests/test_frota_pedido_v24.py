@@ -164,11 +164,13 @@ def test_gestor_cadastra_contentor_novo_e_motorista_nao_pode(db_session, monkeyp
     assert router.handle(msg("cadastrar contentor 25", phone="351900000777")) == "Operação não permitida."
     criado = router.handle(msg("Cadastrar contentor 25"))
     repetido = router.handle(msg("cadastrar contentor 25"))
-    invalido = router.handle(msg("cadastrar contentor 100"))
+    invalido = router.handle(msg("cadastrar contentor C7"))
+    grande = router.handle(msg("cadastrar contentor 101"))
 
     assert criado == "✅ Contentor 25 cadastrado na frota como disponível."
     assert repetido == "O contentor 25 já está na frota (disponivel)."
-    assert "Numero de contentor invalido" in invalido
+    assert "Número de contentor inválido" in invalido
+    assert grande == "✅ Contentor 101 cadastrado na frota como disponível."
     assert _status(db_session, "25") == StatusContentor.DISPONIVEL
 
     _pedido(PedidoService(db_session))
