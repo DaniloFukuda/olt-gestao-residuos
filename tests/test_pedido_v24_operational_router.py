@@ -2484,7 +2484,7 @@ def test_boundary_pagamento_contentor_preserva_registro_e_commit_do_idle():
     backend.db.commit = calls.commit
     pedido = SimpleNamespace(status_pagamento="PENDENTE", forma_pagamento=None)
 
-    def registrar(pedido_id, forma):
+    def registrar(pedido_id, forma, operador=None):
         pedido.status_pagamento = "PAGO"
         pedido.forma_pagamento = forma
         calls.commit()
@@ -2495,16 +2495,20 @@ def test_boundary_pagamento_contentor_preserva_registro_e_commit_do_idle():
         return_value=TipoEquipamentoPedido.CONTENTOR
     )
     conversa = SimpleNamespace(
-        estado_atual="v24_entrega_forma", contexto_json={"pedido_id": 17}
+        estado_atual="v24_entrega_forma",
+        contexto_json={"pedido_id": 17},
+        telefone="351900000002",
     )
 
     response = backend.registrar_pagamento_entrega_contentor(
         conversa, {"pedido_id": 17}, "MBWay"
     )
 
-    backend.service.registrar_pagamento.assert_called_once_with(17, "MBWay")
+    backend.service.registrar_pagamento.assert_called_once_with(
+        17, "MBWay", operador="351900000002"
+    )
     assert calls.mock_calls == [
-        call.registrar_pagamento(17, "MBWay"),
+        call.registrar_pagamento(17, "MBWay", operador="351900000002"),
         call.commit(),
         call.commit(),
     ]

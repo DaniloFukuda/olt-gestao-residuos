@@ -1435,6 +1435,8 @@ def test_entrega_v24_pagamento_pendente_pode_ser_pago_no_local(db_session, monke
     assert "Pagamento registrado" in response
     assert pedido.status_pagamento == StatusPagamento.PAGO.value
     assert pedido.forma_pagamento == "Dinheiro"
+    assert pedido.pagamento_recebido_por == "351900009900"
+    assert pedido.pagamento_recebido_em is not None
 
 
 def test_entrega_v24_pagamento_pendente_pode_continuar_pendente(db_session, monkeypatch):

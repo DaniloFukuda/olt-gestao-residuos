@@ -676,12 +676,15 @@ class PedidoService:
                 )
             )
 
-    def registrar_pagamento(self, pedido_id: int, forma: str) -> None:
+    def registrar_pagamento(self, pedido_id: int, forma: str, operador: str | None = None) -> None:
         pedido = self.get(pedido_id)
         if not pedido:
             raise ValueError("Pedido não encontrado.")
         pedido.status_pagamento = StatusPagamento.PAGO.value
         pedido.forma_pagamento = forma
+        # Mesma trilha do recebimento de pendentes: quem recebeu e quando.
+        pedido.pagamento_recebido_em = utcnow()
+        pedido.pagamento_recebido_por = operador
         self.db.commit()
 
     def confirmar_recolha(

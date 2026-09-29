@@ -625,12 +625,12 @@ class PedidoV24Agent:
                 return "Selecione uma forma de pagamento."
             if form == "Outro":
                 return self._advance(conversa, "v24_entrega_forma_outro", ctx, "Qual foi a forma recebida?")
-            self.service.registrar_pagamento(ctx["pedido_id"], form)
+            self.service.registrar_pagamento(ctx["pedido_id"], form, operador=conversa.telefone)
             return self._idle(conversa, "✅ Entrega confirmada com sucesso para todos os ativos processados. Pagamento registrado.")
         if state == "v24_entrega_forma_outro":
             if not raw:
                 return "Informe a forma recebida."
-            self.service.registrar_pagamento(ctx["pedido_id"], raw[:80])
+            self.service.registrar_pagamento(ctx["pedido_id"], raw[:80], operador=conversa.telefone)
             return self._idle(conversa, "✅ Entrega confirmada com sucesso para todos os ativos processados. Pagamento registrado.")
 
         if state == "v24_recolha_pedido":
@@ -1978,7 +1978,7 @@ class PedidoV24Agent:
             is not TipoEquipamentoPedido.CONTENTOR
         ):
             raise ValueError("Esta operação aceita apenas contentores.")
-        self.service.registrar_pagamento(ctx["pedido_id"], forma)
+        self.service.registrar_pagamento(ctx["pedido_id"], forma, operador=conversa.telefone)
         return self._idle(
             conversa,
             "✅ Entrega confirmada com sucesso para todos os ativos processados. Pagamento registrado.",
