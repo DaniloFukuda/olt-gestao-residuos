@@ -10,6 +10,9 @@ class Settings(BaseSettings):
     database_url: str = "sqlite:///./olt_entulhos.db"
     media_dir: str = "./media"
 
+    # Token exigido no cabeçalho X-Dashboard-Token de /dashboard/*; vazio desliga.
+    dashboard_token: str = ""
+
     whatsapp_verify_token: str = "troque_este_token"
     whatsapp_app_secret: str = ""
     whatsapp_access_token: str = ""

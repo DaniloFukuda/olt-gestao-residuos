@@ -73,6 +73,8 @@ Endpoints principais:
 - `GET /dashboard/alugueres/vencendo-amanha`
 - `GET /dashboard/lembretes`
 
+Os endpoints `/dashboard/*` devolvem dados de clientes e exigem o cabeçalho `X-Dashboard-Token` igual a `DASHBOARD_TOKEN`; sem `DASHBOARD_TOKEN` configurado respondem 404.
+
 ## Configuração
 
 Crie um `.env` a partir de `.env.example`. Variáveis principais:
@@ -83,6 +85,7 @@ Crie um `.env` a partir de `.env.example`. Variáveis principais:
 | `WHATSAPP_VERIFY_TOKEN` | Token de verificação do webhook (GET da Meta) |
 | `WHATSAPP_APP_SECRET` | App Secret da Meta. Com ele preenchido o webhook exige assinatura válida. **Preencha em produção.** |
 | `WHATSAPP_ACCESS_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID` | Credenciais de envio da Cloud API |
+| `DASHBOARD_TOKEN` | Token dos endpoints `/dashboard/*` (vazio = desligados) |
 | `AUTHORIZED_OPERATOR_PHONES` | Telefones com acesso de gestor quando a tabela `operadores` está vazia (fallback) |
 | `FLUXO_TIMEOUT_MINUTOS` | Minutos até um fluxo abandonado expirar (padrão 120) |
 | `FEATURE_CONTENTORES_ENABLED`, `FEATURE_CARRINHAS_ENABLED`, `FEATURE_AVARIAS_ENABLED` | Liga/desliga serviços |
