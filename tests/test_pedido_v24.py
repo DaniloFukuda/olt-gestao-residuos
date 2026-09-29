@@ -1055,7 +1055,7 @@ def test_cadastro_v24_carrinha_ordem_quantidade_cliente_data_hora_residuo(db_ses
     assert conversa.contexto_json["nome"] == "Cliente Ordem"
 
 
-def test_cadastro_v24_corrigir_abre_lista_com_ids_e_edita_quantidade_sem_salvar(db_session, monkeypatch):
+def test_cadastro_v24_corrigir_com_mais_de_10_campos_vai_como_texto_e_edita_quantidade(db_session, monkeypatch):
     liberar_operadores(monkeypatch)
     router = WhatsappRouterAgent(db_session)
     steps = [
@@ -1069,11 +1069,13 @@ def test_cadastro_v24_corrigir_abre_lista_com_ids_e_edita_quantidade_sem_salvar(
 
     corrigir = router.handle(msg("Corrigir"))
     result = send_whatsapp_message("351900009900", corrigir, force_mock=True)
-    assert result["interactive_type"] == "list"
-    assert result["list_rows"][0]["id"] == "corrigir_pedido:quantidade"
-    assert "corrigir_pedido:hora_entrega" in [row["id"] for row in result["list_rows"]]
+    # Carrinha paga tem 12 campos; a lista da Meta aceita no máximo 10 linhas,
+    # por isso o menu vai como texto numerado.
+    assert "interactive_type" not in result
+    assert "1. Quantidade de carrinhas" in result["body"]
+    assert "5. Hora da chegada" in result["body"]
 
-    prompt = router.handle(msg("corrigir_pedido:quantidade"))
+    prompt = router.handle(msg("1"))
     assert "carrinhas" in prompt.lower()
     confirmacao = router.handle(msg("2"))
     conversa = db_session.query(ConversaWhatsApp).one()

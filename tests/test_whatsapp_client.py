@@ -225,7 +225,9 @@ def test_send_whatsapp_message_usa_botoes_quando_tiver_tres_opcoes(monkeypatch):
     }
 
 
-def test_send_whatsapp_message_trunca_titulo_longo_de_botao(monkeypatch):
+def test_send_whatsapp_message_titulo_longo_vira_lista_sem_cortar_texto(monkeypatch):
+    # Botão aceita 20 caracteres; em vez de cortar ("Botao com titulo..."),
+    # a opção vai numa lista e o texto completo fica na descrição da linha.
     clear_settings(monkeypatch)
 
     body = "Escolha uma opcao\n\n1. Botao com titulo muito grande\n2. Opcao curta"
@@ -236,9 +238,13 @@ def test_send_whatsapp_message_trunca_titulo_longo_de_botao(monkeypatch):
         "body": "Escolha uma opcao",
         "status": "mocked",
         "type": "interactive",
-        "interactive_type": "button",
-        "buttons": [
-            {"id": "option_1", "title": "Botao com titulo..."},
+        "interactive_type": "list",
+        "list_rows": [
+            {
+                "id": "option_1",
+                "title": "Botao com titulo muit...",
+                "description": "Botao com titulo muito grande",
+            },
             {"id": "option_2", "title": "Opcao curta"},
         ],
     }
@@ -273,3 +279,36 @@ def test_send_whatsapp_message_faz_fallback_para_texto_quando_interativo_falha(m
     assert result["status"] == "sent"
     assert result["message_id"] == "wamid.text"
     assert result["fallback_from"] == "button"
+
+
+CAMPOS_CORRECAO_CONTENTOR = [
+    "Quantidade de contentores", "Nome do cliente", "Telefone", "Dia da entrega",
+    "Tipo de resíduo", "Pessoal para carregamento", "Valor total",
+    "Status do pagamento", "Endereço", "Ponto de referência",
+]
+
+
+def _menu_correcao(campos):
+    return "Qual campo deseja corrigir?\n" + "\n".join(
+        f"{numero}. {campo}" for numero, campo in enumerate(campos, 1)
+    )
+
+
+def test_send_whatsapp_message_correcao_com_10_campos_continua_lista(monkeypatch):
+    clear_settings(monkeypatch)
+
+    result = send_whatsapp_message("351900000000", _menu_correcao(CAMPOS_CORRECAO_CONTENTOR))
+
+    assert result["interactive_type"] == "list"
+    assert len(result["list_rows"]) == 10
+
+
+def test_send_whatsapp_message_correcao_com_11_campos_vai_como_texto(monkeypatch):
+    # Limite da Meta: 10 linhas por lista. Pedido pago tem também "Forma de pagamento".
+    clear_settings(monkeypatch)
+    campos = [*CAMPOS_CORRECAO_CONTENTOR[:8], "Forma de pagamento", *CAMPOS_CORRECAO_CONTENTOR[8:]]
+
+    result = send_whatsapp_message("351900000000", _menu_correcao(campos))
+
+    assert "interactive_type" not in result
+    assert "11. Ponto de referência" in result["body"]

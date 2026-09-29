@@ -258,7 +258,9 @@ def test_correcao_todas_opcoes_entram_no_estado_correto_por_numero_e_id(db_sessi
         _assert_context_preserved(interactive_ctx_before, interactive.contexto_json)
 
 
-def test_fallback_textual_correcao_12_opcoes_permite_responder_9(db_session, monkeypatch):
+def test_correcao_com_12_opcoes_vai_como_texto_e_permite_responder_9(db_session, monkeypatch):
+    # A lista interativa da Meta aceita no máximo 10 linhas; com 12 campos o
+    # envio como lista era sempre recusado e só então caía para texto.
     monkeypatch.setenv("ENV", "development")
     monkeypatch.setenv("WHATSAPP_ACCESS_TOKEN", "fake-token")
     monkeypatch.setenv("WHATSAPP_PHONE_NUMBER_ID", "1148807428322172")
@@ -283,12 +285,11 @@ def test_fallback_textual_correcao_12_opcoes_permite_responder_9(db_session, mon
 
     result = send_whatsapp_message(conversa.telefone, menu)
 
-    assert calls[0]["type"] == "interactive"
-    assert calls[0]["interactive"]["type"] == "list"
-    assert calls[1]["type"] == "text"
-    assert result["fallback_from"] == "list"
-    assert "9. Status do pagamento" in calls[1]["text"]["body"]
-    assert "12. ponto de referencia" in agent._norm(calls[1]["text"]["body"])
+    assert len(calls) == 1
+    assert calls[0]["type"] == "text"
+    assert "fallback_from" not in result
+    assert "9. Status do pagamento" in calls[0]["text"]["body"]
+    assert "12. ponto de referencia" in agent._norm(calls[0]["text"]["body"])
     db_session.refresh(conversa)
     assert conversa.estado_atual == "v24_cadastro_corrigir"
 

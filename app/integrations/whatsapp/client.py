@@ -11,9 +11,12 @@ from app.integrations.whatsapp.errors import build_meta_error, build_transport_e
 
 logger = get_logger(__name__)
 
+# Limites da WhatsApp Cloud API: até 3 botões de resposta com título de até
+# 20 caracteres; lista com até 10 linhas no total (título até 24 caracteres,
+# descrição até 72). Mensagens fora destes limites são recusadas pela Meta.
 MAX_BUTTON_OPTIONS = 3
 MAX_LIST_OPTIONS = 5
-MAX_CORRIGIR_LIST_OPTIONS = 12
+MAX_CORRIGIR_LIST_OPTIONS = 10
 MAX_ENTREGA_LIST_OPTIONS = 10
 MAX_BUTTON_TITLE_CHARS = 20
 MAX_LIST_TITLE_CHARS = 24
@@ -35,6 +38,19 @@ def send_whatsapp_message(to: str, body: str, force_mock: bool = False) -> dict[
             to,
             _entrega_body_without_options(body),
             _list_rows_from_options(options)[:MAX_ENTREGA_LIST_OPTIONS],
+            force_mock=force_mock,
+        )
+        return _fallback_to_text_if_needed(to, body, result, force_mock, interactive_type="list")
+
+    if 0 < len(options) <= MAX_BUTTON_OPTIONS and any(
+        len(_clean_option_title(option["title"])) > MAX_BUTTON_TITLE_CHARS for option in options
+    ):
+        # Botão cortaria o texto ("Não, está mist..."); a lista mostra o título
+        # completo na descrição da linha.
+        result = send_list_message(
+            to,
+            _body_without_numbered_options(body),
+            _list_rows_from_options(options),
             force_mock=force_mock,
         )
         return _fallback_to_text_if_needed(to, body, result, force_mock, interactive_type="list")
@@ -293,7 +309,7 @@ def _options_for_body(body: str) -> list[dict[str, str]]:
             {"id": "entrega_referencia:nao", "title": "Não"},
         ]
     if (
-        "qual residuo caiu no chao" in normalized
+        ("qual residuo caiu no chao" in normalized or "qual residuo caiu de fato no chao" in normalized)
         and "entulho limpo" in normalized
         and "entulho misto" in normalized
     ):
@@ -302,7 +318,7 @@ def _options_for_body(body: str) -> list[dict[str, str]]:
             {"id": "despejo_residuo:misto", "title": "Entulho Misto"},
         ]
     if (
-        "o entulho do contentor" in normalized
+        ("o entulho do contentor" in normalized or "o entulho desta carrinha" in normalized)
         and "sim, tudo certo" in normalized
         and "misturado/errado" in normalized
     ):
@@ -434,6 +450,8 @@ def _list_rows_from_options(options: list[dict[str, str]]) -> list[dict[str, str
             return []
         row = {"id": option["id"], "title": row_title}
         description = option.get("description")
+        if not description and row_title != _clean_option_title(option["title"]):
+            description = _clean_option_title(option["title"])
         if description:
             row["description"] = _truncate_title(description, MAX_LIST_DESCRIPTION_CHARS)
         rows.append(row)
