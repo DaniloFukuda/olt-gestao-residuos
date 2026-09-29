@@ -119,6 +119,11 @@ MAIN_MENU = (
     "5. 📊 Painel de Controle Operacional\n\n"
     "Digite o número da opção desejada."
 )
+FLUXO_EXPIRADO_MESSAGE = (
+    "⏱️ A operação anterior ficou parada por mais de {tempo} e foi encerrada. "
+    "As etapas já confirmadas continuam salvas; a etapa que estava em curso "
+    "precisa ser refeita."
+)
 CANCELLED_MENU_MESSAGE = "Operação cancelada. Nenhuma alteração foi salva.\n\n" + MAIN_MENU
 
 
@@ -268,6 +273,18 @@ class WhatsappRouterAgent:
             ):
                 return FORBIDDEN_MESSAGE
             return self.pagamento_pendente_agent.start(conversa)
+
+        if (
+            conversa.estado_atual.startswith(PedidoV24OperationalRouter.PREFIX)
+            and self._fluxo_v24_expirado(conversa)
+        ):
+            conversa.estado_atual = "idle"
+            conversa.contexto_json = {}
+            self.db.commit()
+            self._queue_initial_menu(perfil)
+            minutos = get_settings().fluxo_timeout_minutos
+            tempo = f"{minutos // 60} horas" if minutos % 60 == 0 and minutos >= 120 else f"{minutos} minutos"
+            return FLUXO_EXPIRADO_MESSAGE.format(tempo=tempo)
 
         if conversa.estado_atual.startswith(PedidoV24OperationalRouter.PREFIX):
             return self._finalize_response(
@@ -1998,6 +2015,18 @@ class WhatsappRouterAgent:
         menu = self._initial_menu(perfil)
         if menu not in self._pending_messages:
             self._pending_messages.append(menu)
+
+    @staticmethod
+    def _fluxo_v24_expirado(conversa: ConversaWhatsApp) -> bool:
+        """Fluxo abandonado: sem avanço há mais de FLUXO_TIMEOUT_MINUTOS (padrão 2 h)."""
+        atualizado = conversa.atualizado_em
+        if not atualizado:
+            return False
+        if atualizado.tzinfo is None:
+            # SQLite devolve sem fuso; o valor é gravado em UTC.
+            atualizado = atualizado.replace(tzinfo=timezone.utc)
+        limite = timedelta(minutes=get_settings().fluxo_timeout_minutos)
+        return utcnow() - atualizado > limite
 
     def _is_expired(self, conversa: ConversaWhatsApp) -> bool:
         context = conversa.contexto_json or {}

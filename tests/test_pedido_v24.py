@@ -3264,3 +3264,45 @@ def test_alugados_vencendo_e_atrasados_incluem_pedidos_v24(db_session, monkeypat
     assert "Cliente Regular V24" not in vencendo and "Cliente Atrasado V24" not in vencendo
     assert "33 - Cliente Atrasado V24 - vencimento" in atrasados
     assert "Cliente Regular V24" not in atrasados and "Cliente Amanha V24" not in atrasados
+
+
+def _envelhecer_conversa(db_session, horas):
+    db_session.execute(
+        ConversaWhatsApp.__table__.update().values(
+            atualizado_em=datetime.now(timezone.utc) - timedelta(hours=horas)
+        )
+    )
+    db_session.commit()
+    db_session.expire_all()
+
+
+def test_fluxo_v24_parado_mais_de_duas_horas_e_encerrado(db_session, monkeypatch):
+    liberar_operadores(monkeypatch)
+    router = WhatsappRouterAgent(db_session)
+    router.handle(msg("1"))
+    router.handle(msg("1"))
+    router.handle(msg("Cliente Expirado"))
+    _envelhecer_conversa(db_session, 3)
+
+    response = router.handle(msg("351912345678"))
+
+    conversa = db_session.query(ConversaWhatsApp).one()
+    assert "parada por mais de 2 horas" in response
+    assert "etapas já confirmadas continuam salvas" in response
+    assert conversa.estado_atual == "idle"
+    assert conversa.contexto_json == {}
+    assert router.pop_pending_messages() == [MAIN_MENU]
+    assert db_session.query(Pedido).count() == 0
+
+
+def test_fluxo_v24_com_menos_de_duas_horas_continua(db_session, monkeypatch):
+    liberar_operadores(monkeypatch)
+    router = WhatsappRouterAgent(db_session)
+    router.handle(msg("1"))
+    router.handle(msg("1"))
+    router.handle(msg("Cliente Ativo"))
+    _envelhecer_conversa(db_session, 1)
+
+    router.handle(msg("351912345678"))
+
+    assert db_session.query(ConversaWhatsApp).one().estado_atual != "idle"

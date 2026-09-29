@@ -31,6 +31,8 @@ class Settings(BaseSettings):
     authorized_operator_phone: str = ""
     authorized_operator_phones: str = ""
     timezone: str = "Europe/Lisbon"
+    # Fluxo V24 sem avanço há mais que isto é encerrado na próxima mensagem.
+    fluxo_timeout_minutos: int = 120
     feature_avarias_enabled: bool = True
     feature_contentores_enabled: bool = True
     feature_carrinhas_enabled: bool = True
