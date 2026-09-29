@@ -346,3 +346,48 @@ def test_falha_no_commit_do_despejo_faz_rollback_integral_e_preserva_excecao(
     )
     db_session.refresh(carrinha)
     assert carrinha.status_operacional_carrinha == StatusOperacionalCarrinha.CONCLUIDA.value
+
+
+def test_prazo_da_carrinha_funciona_com_datas_relidas_do_sqlite(db_session):
+    service, pedido = criar_carrinhas(db_session)
+    carrinha = pedido.contentores[0]
+    confirmar_chegada(service, pedido, carrinha)
+    db_session.commit()
+    db_session.expire_all()
+
+    carrinha = db_session.get(type(carrinha), carrinha.id)
+    assert carrinha.chegada_carrinha_data_hora.tzinfo is None  # SQLite descarta o fuso
+    agora = utcnow()
+
+    assert service.carrinha_atrasada(carrinha, agora) is False
+    assert service.carrinha_atrasada(carrinha, agora + timedelta(hours=3)) is True
+    assert service.previsao_partida_carrinha(carrinha).tzinfo is not None
+    carrinha.partida_carrinha_data_hora = carrinha.chegada_carrinha_data_hora + timedelta(hours=1)
+    assert service.tempo_operacional_carrinha(carrinha) == timedelta(hours=1)
+
+
+@pytest.mark.parametrize("perfil", ["GESTOR", "FUNCIONARIO"])
+def test_painel_com_carrinha_em_atendimento_relida_do_banco_nao_quebra(db_session, perfil):
+    from app.agents.whatsapp_router_agent import WhatsappRouterAgent
+    from app.integrations.whatsapp.parser import NormalizedWhatsAppMessage
+    from app.models.operador import Operador, PerfilOperador
+
+    service, pedido = criar_carrinhas(db_session)
+    confirmar_chegada(service, pedido, pedido.contentores[0])
+    db_session.add(
+        Operador(
+            telefone_whatsapp="351910000001",
+            nome_operador="Operador Painel",
+            perfil=PerfilOperador(perfil),
+            ativo=True,
+        )
+    )
+    db_session.commit()
+    db_session.expire_all()
+
+    painel = WhatsappRouterAgent(db_session).handle(
+        NormalizedWhatsAppMessage(telefone="351910000001", tipo="text", texto="5", message_id="m")
+    )
+
+    assert "Carrinhas em atendimento" in painel
+    assert "Eloisa Compatível — 🟢 Dentro do prazo — partida prevista" in painel

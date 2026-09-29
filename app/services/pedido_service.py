@@ -37,6 +37,13 @@ FORMAS_PAGAMENTO = {
 }
 
 
+def _as_utc(value: datetime) -> datetime:
+    """O SQLite devolve datetimes sem fuso; eles são gravados em UTC."""
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
 class PedidoService:
     def __init__(self, db: Session):
         self.db = db
@@ -817,9 +824,9 @@ class PedidoService:
 
     def previsao_partida_carrinha(self, carrinha: PedidoContentor) -> datetime | None:
         if carrinha.partida_prevista_carrinha_data_hora:
-            return carrinha.partida_prevista_carrinha_data_hora
+            return _as_utc(carrinha.partida_prevista_carrinha_data_hora)
         if carrinha.chegada_carrinha_data_hora:
-            return carrinha.chegada_carrinha_data_hora + timedelta(hours=2)
+            return _as_utc(carrinha.chegada_carrinha_data_hora) + timedelta(hours=2)
         return None
 
     def carrinha_atrasada(self, carrinha: PedidoContentor, agora: datetime | None = None) -> bool:
@@ -829,12 +836,12 @@ class PedidoService:
         ):
             return False
         previsao = self.previsao_partida_carrinha(carrinha)
-        return bool(previsao and (agora or utcnow()) > previsao)
+        return bool(previsao and _as_utc(agora or utcnow()) > previsao)
 
     def tempo_operacional_carrinha(self, carrinha: PedidoContentor) -> timedelta | None:
         if not carrinha.chegada_carrinha_data_hora or not carrinha.partida_carrinha_data_hora:
             return None
-        return carrinha.partida_carrinha_data_hora - carrinha.chegada_carrinha_data_hora
+        return _as_utc(carrinha.partida_carrinha_data_hora) - _as_utc(carrinha.chegada_carrinha_data_hora)
 
     def confirmar_despejo_carrinha(
         self,
