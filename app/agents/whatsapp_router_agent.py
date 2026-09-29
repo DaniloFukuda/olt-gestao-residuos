@@ -639,32 +639,50 @@ class WhatsappRouterAgent:
         return "🚨 *3. PENDÊNCIAS ATIVAS*\n" + conteudo
 
     def _painel_v4_financeiro(self, pedidos: list[Pedido], alugueres: list[AluguerContentor], today) -> str:
+        # Regra de negócio: "Pago" e o caixa contam o que foi recebido neste
+        # mês (data do recebimento); "Pendente" e "a receber" somam todas as
+        # dívidas em aberto, inclusive de meses anteriores.
         totais = self._financeiro_mes(pedidos, today)
         for aluguer in alugueres:
-            criado_em = self._local_date(aluguer.criado_em)
-            if criado_em.year != today.year or criado_em.month != today.month:
+            if getattr(aluguer, "status", None) == StatusAluguer.CANCELADO:
                 continue
-            status = "pago" if aluguer.pago else "pendente"
-            totais[f"contentores_{status}"] += Decimal(str(aluguer.valor or 0))
-        faturado = totais["contentores_pago"] + totais["carrinhas_pago"]
-        receber = totais["contentores_pendente"] + totais["carrinhas_pendente"]
+            valor = Decimal(str(aluguer.valor or 0))
+            if not aluguer.pago:
+                totais["contentores_pendente"] += valor
+                continue
+            criado_em = self._local_date(aluguer.criado_em)
+            if criado_em.year == today.year and criado_em.month == today.month:
+                totais["contentores_pago"] += valor
+        mistos_pago = totais.get("mistos_pago", Decimal("0"))
+        mistos_pendente = totais.get("mistos_pendente", Decimal("0"))
+        faturado = totais["contentores_pago"] + totais["carrinhas_pago"] + mistos_pago
+        receber = totais["contentores_pendente"] + totais["carrinhas_pendente"] + mistos_pendente
         sep = "════════════════════════"
-        return "\n".join(
-            [
-                "💶 *4. RESUMO FINANCEIRO DO MÊS*",
-                sep,
-                "📦 *FATURAMENTO CONTENTORES*",
-                f"• Pago: {self._money(totais['contentores_pago'])} | Pendente: {self._money(totais['contentores_pendente'])}",
+        linhas = [
+            "💶 *4. RESUMO FINANCEIRO DO MÊS*",
+            sep,
+            "📦 *FATURAMENTO CONTENTORES*",
+            f"• Pago: {self._money(totais['contentores_pago'])} | Pendente: {self._money(totais['contentores_pendente'])}",
+            "",
+            "🚛 *FATURAMENTO CARRINHAS*",
+            f"• Pago: {self._money(totais['carrinhas_pago'])} | Pendente: {self._money(totais['carrinhas_pendente'])}",
+        ]
+        if mistos_pago or mistos_pendente:
+            linhas.extend([
                 "",
-                "🚛 *FATURAMENTO CARRINHAS*",
-                f"• Pago: {self._money(totais['carrinhas_pago'])} | Pendente: {self._money(totais['carrinhas_pendente'])}",
-                sep,
-                f"🟢 Total faturado — caixa: {self._money(faturado)}",
-                f"🟡 Total a receber: {self._money(receber)}",
-                f"📊 Total projetado: {self._money(faturado + receber)}",
-                sep,
-            ]
-        )
+                "🔀 *PEDIDOS MISTOS (contentor + carrinha)*",
+                f"• Pago: {self._money(mistos_pago)} | Pendente: {self._money(mistos_pendente)}",
+            ])
+        linhas.extend([
+            sep,
+            f"🟢 Total faturado — caixa: {self._money(faturado)}",
+            "   (recebido neste mês)",
+            f"🟡 Total a receber: {self._money(receber)}",
+            "   (todas as dívidas em aberto, inclusive de meses anteriores)",
+            f"📊 Total projetado: {self._money(faturado + receber)}",
+            sep,
+        ])
+        return "\n".join(linhas)
 
     def _alugueres_v4(self) -> list[AluguerContentor]:
         return (
@@ -790,11 +808,10 @@ class WhatsappRouterAgent:
             "contentores_pendente": Decimal("0"),
             "carrinhas_pago": Decimal("0"),
             "carrinhas_pendente": Decimal("0"),
+            "mistos_pago": Decimal("0"),
+            "mistos_pendente": Decimal("0"),
         }
         for pedido in pedidos:
-            criado_em = self._local_date(pedido.criado_em)
-            if criado_em.year != today.year or criado_em.month != today.month:
-                continue
             tipos = {
                 item.tipo_equipamento for item in pedido.contentores
                 if item.tipo_equipamento in {
@@ -802,11 +819,21 @@ class WhatsappRouterAgent:
                     TipoEquipamentoPedido.CARRINHA.value,
                 }
             }
-            if len(tipos) != 1:
+            if not tipos:
                 continue
-            tipo = "contentores" if tipos == {TipoEquipamentoPedido.CONTENTOR.value} else "carrinhas"
-            status = "pago" if pedido.status_pagamento == StatusPagamento.PAGO.value else "pendente"
-            totais[f"{tipo}_{status}"] += Decimal(str(pedido.valor_global or 0))
+            if len(tipos) > 1:
+                tipo = "mistos"
+            elif tipos == {TipoEquipamentoPedido.CONTENTOR.value}:
+                tipo = "contentores"
+            else:
+                tipo = "carrinhas"
+            valor = Decimal(str(pedido.valor_global or 0))
+            if pedido.status_pagamento != StatusPagamento.PAGO.value:
+                totais[f"{tipo}_pendente"] += valor
+                continue
+            recebido_em = self._local_date(pedido.pagamento_recebido_em or pedido.criado_em)
+            if recebido_em.year == today.year and recebido_em.month == today.month:
+                totais[f"{tipo}_pago"] += valor
         return totais
 
     def _format_entrega_hoje(self, pedido: Pedido, itens: list[PedidoContentor], incluir_horario: bool) -> str:

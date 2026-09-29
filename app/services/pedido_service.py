@@ -133,6 +133,9 @@ class PedidoService:
             valor_global=valor,
             status_pagamento=StatusPagamento.PAGO.value if pago else StatusPagamento.PENDENTE.value,
             forma_pagamento=forma_pagamento if pago else None,
+            # Pago no cadastro: o caixa do mês conta pela data de recebimento.
+            pagamento_recebido_em=utcnow() if pago else None,
+            pagamento_recebido_por=pedido_feito_por if pago else None,
             pedido_feito_por=pedido_feito_por,
             endereco_aproximado=endereco_aproximado.strip(),
             endereco_latitude=endereco_latitude,

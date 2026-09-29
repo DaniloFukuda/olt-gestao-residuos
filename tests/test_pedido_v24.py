@@ -2635,8 +2635,10 @@ def test_resumo_v32_gestor_ve_blocos_contentores_carrinhas_financeiro_e_menu_sep
     assert "Pago: 100,00 € | Pendente: 0,00 €" in response
     assert "Pago: 80,00 € | Pendente: 0,00 €" in response
     assert "Total faturado — caixa: 180,00 €" in response
-    assert "Total a receber: 0,00 €" in response
-    assert "Total projetado: 180,00 €" in response
+    # O pedido misto pendente (100 €) entra no "a receber": todas as dívidas contam.
+    assert "🔀 *PEDIDOS MISTOS (contentor + carrinha)*" in response
+    assert "Total a receber: 100,00 €" in response
+    assert "Total projetado: 280,00 €" in response
     assert "[Abrir endereço]" not in response
     assert "Menu Principal" not in response
     assert router.pop_pending_messages() == [MAIN_MENU]
@@ -2730,7 +2732,8 @@ def test_resumo_v33_agrupa_pedido_sem_duplicar_ativos_fotos_ou_pendencias(db_ses
     assert "https://wa.me/?text=resolver%20avaria%202" in response
 
 
-def test_resumo_v33_financeiro_usa_criado_em_e_misto_so_no_global(db_session):
+def test_resumo_financeiro_caixa_pelo_recebimento_e_a_receber_total(db_session):
+    """Caixa = recebido neste mês; a receber = todas as dívidas em aberto."""
     gestor = "351900010004"
     operador(db_session, gestor, PerfilOperador.GESTOR)
     service = PedidoService(db_session)
@@ -2781,6 +2784,8 @@ def test_resumo_v33_financeiro_usa_criado_em_e_misto_so_no_global(db_session):
         residuos=["Entulho Limpo"],
     )
     pedido_antigo.criado_em = fora_do_mes
+    pedido_antigo.pagamento_recebido_em = fora_do_mes
+    pedido_carrinha.criado_em = fora_do_mes
     db_session.commit()
     for pedido in (pedido_contentor, pedido_carrinha, pedido_misto, pedido_antigo):
         entregar_pedido(pedido, db_session, now - timedelta(days=5), ["51", "52"])
@@ -2791,9 +2796,58 @@ def test_resumo_v33_financeiro_usa_criado_em_e_misto_so_no_global(db_session):
     assert "• Pago: 1.000,50 € | Pendente: 0,00 €" in response
     assert "🚛 *FATURAMENTO CARRINHAS*" in response
     assert "• Pago: 0,00 € | Pendente: 200,00 €" in response
+    assert "• Pago: 0,00 € | Pendente: 300,00 €" in response
     assert "Total faturado — caixa: 1.000,50 €" in response
-    assert "Total a receber: 200,00 €" in response
-    assert "Total projetado: 1.200,50 €" in response
+    assert "Total a receber: 500,00 €" in response
+    assert "Total projetado: 1.500,50 €" in response
+
+
+def test_resumo_financeiro_divida_antiga_recebida_hoje_entra_no_caixa(db_session):
+    gestor = "351900010014"
+    operador(db_session, gestor, PerfilOperador.GESTOR)
+    service = PedidoService(db_session)
+    pedido = service.criar(
+        nome_cliente="Cliente Divida Antiga",
+        telefone_cliente="351912345690",
+        data_planejada=datetime.now(timezone.utc),
+        valor_global="150",
+        pago=False,
+        forma_pagamento=None,
+        pedido_feito_por="gestor",
+        endereco_aproximado="Rua",
+        ponto_referencia=None,
+        residuos=["Entulho Limpo"],
+    )
+    pedido.criado_em = datetime.now(timezone.utc) - timedelta(days=70)
+    db_session.commit()
+    router = WhatsappRouterAgent(db_session)
+
+    antes = router.handle(msg("resumo", phone=gestor))
+    service.registrar_pagamento(pedido.id, "MBWay", operador=gestor)
+    depois = router.handle(msg("resumo", phone=gestor))
+
+    assert "Total a receber: 150,00 €" in antes
+    assert "Total faturado — caixa: 0,00 €" in antes
+    assert "Total faturado — caixa: 150,00 €" in depois
+    assert "Total a receber: 0,00 €" in depois
+
+
+def test_pedido_pago_no_cadastro_regista_recebimento(db_session):
+    pedido = PedidoService(db_session).criar(
+        nome_cliente="Cliente Pago",
+        telefone_cliente="351912345691",
+        data_planejada=datetime.now(timezone.utc),
+        valor_global="80",
+        pago=True,
+        forma_pagamento="Dinheiro",
+        pedido_feito_por="351900010015",
+        endereco_aproximado="Rua",
+        ponto_referencia=None,
+        residuos=["Entulho Limpo"],
+    )
+
+    assert pedido.pagamento_recebido_em is not None
+    assert pedido.pagamento_recebido_por == "351900010015"
 
 
 def test_resumo_v4_entregas_hoje_contentor_carrinha_endereco_e_horario_seguro(db_session):
