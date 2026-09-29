@@ -14,6 +14,7 @@ O sistema cobre dois serviços:
 - **Pagamentos:** pago na criação ou pendente; recebimento na entrega regista forma, data e operador.
 - **Pendências:** pagamento pendente, avaria (com fotos) e carga divergente no despejo, com revisão e resolução pelo gestor.
 - **Painel operacional:** ações de hoje, recolhas do dia, atrasos, carrinhas em atendimento, pendências e resumo financeiro.
+- **Frota:** a entrega só aceita contentor cadastrado e disponível; o ciclo atualiza o estado (alugado → disponível ou manutenção). O gestor cadastra números novos com `cadastrar contentor N`.
 - **Perfis:** GESTOR (tudo) e FUNCIONARIO (operação de campo), a partir da tabela `operadores`.
 - **Webhook robusto:** assinatura da Meta (`X-Hub-Signature-256`), deduplicação por `message_id` e fila por telefone para mensagens concorrentes.
 - **Testes automatizados:** domínio, fluxos conversacionais, webhook, migrações e cenários de sistema de ponta a ponta.

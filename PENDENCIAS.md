@@ -1,21 +1,64 @@
-# Pendências da revisão (Claude Code)
+# Pendências após a consolidação (setembro de 2026)
 
-## Feito neste branch
-- 10 commits de correção (webhook com assinatura da Meta, painel com carrinha em atendimento, loop do despejo, "Recolher Hoje", validação de valor, colisão de IDs em `resolver`, auditoria do pagamento na entrega, comandos "entrega"/"recolha", payload malformado, acentuação).
-- Merges: `feature/recolha-contentores-paulo`, `feature/cadastro-gestores-lucas-secretario` (telefones reais removidos do código; usar `OLT_GESTORES`) e `feature/meta-outbox-whatsapp` (fila por telefone portada para o webhook atual; dedup antigo removido por ser superado pelo módulo 3; outbox mantida sem ligação ao envio, como no branch original).
+Contexto, arquitetura e regras já decididas: ver [`AGENTS.md`](AGENTS.md).
+Estado do branch: 28 branches consolidados (só `feature/menu-cadastro-unitario`
+ficou de fora, por estar superado), 8 decisões de negócio implementadas,
+suíte completa verde (1621 testes) e teste de ponta a ponta com 22 pedidos.
 
-## Falta fazer
-1. Rodar a suíte completa (`python -m pytest -q`) após o merge da outbox; só os arquivos afetados foram validados.
-2. Merge de `origin/feature/testes-sistema-olt` (commit bd960d7, `tests/system/`), adaptando autorização e dedup ao módulo 3.
-3. Merge de `origin/main` e novo README que descreva o sistema atual (Menu V4, carrinhas, `WHATSAPP_APP_SECRET`).
-4. `feature/menu-cadastro-unitario` não deve ser integrado (superado pelo Menu V4).
-5. Após aceitar: preencher `WHATSAPP_APP_SECRET` no `.env` do servidor.
-6. Apagar os branches antigos depois do merge e avaliar tornar o repositório privado (há telefones, IDs da Meta e verify token no histórico).
+## 1. Ao aceitar o PR (servidor de produção)
 
-## Decisões de negócio em aberto
-1. A tabela de contentores (1–20) é a verdade da frota? Hoje a entrega aceita número inexistente e não atualiza o estado.
-2. O cadastro legado ("novo") ainda é usado?
-3. Divergência de resíduo: por contentor ou por pedido? Gravar o resíduo real mesmo sem cota (e-GAR/LER)?
-4. Financeiro do mês pela data de recebimento?
-5. Tempo de expiração dos fluxos v24 abandonados.
-6. "voltar"/"0" cancelam o fluxo inteiro; devem voltar um passo?
+1. **Preencher `WHATSAPP_APP_SECRET`** no `.env` (Meta → App → Configurações →
+   Básico → Chave secreta). Sem ele, qualquer pessoa que conheça a URL do
+   webhook consegue enviar mensagens como se fosse um operador.
+2. **Trocar o verify token do webhook** (`WHATSAPP_VERIFY_TOKEN`) no `.env` e
+   no painel da Meta: o valor antigo esteve público no repositório.
+3. Se alguém usa `GET /dashboard/*`, definir `DASHBOARD_TOKEN` e enviar o
+   cabeçalho `X-Dashboard-Token`. Sem isso os endpoints respondem 404.
+4. Conferir a frota: a tabela `contentores` é semeada com 1–20. Números em uso
+   que não estejam lá precisam de `cadastrar contentor N` pelo gestor antes da
+   próxima entrega (a entrega passou a recusar número fora da frota).
+   Contentores entregues antes deste PR continuam `disponivel` na tabela até
+   serem despejados; se necessário, ajuste com `alterar contentor`.
+5. Rodar `scripts/setup_local_olt_entulhos.ps1` uma vez numa máquina Windows
+   para validar a alteração (agora mantém os valores já preenchidos no `.env`);
+   não havia PowerShell no ambiente da revisão.
+
+## 2. Depois do merge
+
+1. Apagar os branches antigos (todos estão contidos no `main` após o merge).
+2. Avaliar tornar o repositório privado: o histórico do git ainda contém os
+   telefones, IDs da Meta e o verify token removidos do código.
+
+## 3. Decisões de negócio em aberto (perguntar aos sócios)
+
+1. **Pagamento da carrinha no local:** a entrega de contentor pergunta se o
+   cliente pagou; a chegada/partida da carrinha não pergunta ("O pagamento não
+   foi alterado"). Deve perguntar?
+2. **Divergência de carga resolvida:** hoje "resolver carga N" só marca como
+   resolvida. Deve registar cobrança adicional ou ajuste de valor?
+3. **e-GAR / códigos LER:** o sistema grava "Entulho Limpo"/"Entulho Misto",
+   sem código LER nem guia e-GAR. Em Portugal o transporte de resíduos exige
+   e-GAR no SILiAmb (Portaria n.º 145/2017); os RCD costumam usar LER
+   17 01 07 (misturas de betão, tijolos, ladrilhos) e 17 09 04 (mistura de
+   RCD). Confirmar com a empresa se isto é feito fora do sistema ou se o
+   sistema deve guardar o código LER e o número da e-GAR por despejo.
+4. **Menu "Corrigir" com 11–12 campos** (pedido pago, carrinha) vai como texto
+   numerado, porque a lista do WhatsApp aceita no máximo 10 linhas. Aceitável,
+   ou agrupar campos (ex.: "Pagamento") para voltar a caber numa lista?
+5. **Números de frota acima de 99:** `cadastrar contentor` aceita 1–99 (regra
+   que já existia em `ContentorService.validar_numero`). A empresa usa números
+   maiores?
+
+## 4. Dívida técnica
+
+1. **Outbox não ligada:** `whatsapp_outbox_service.py`/`worker.py` (retry,
+   backoff, limite por destinatário da Meta) existem e têm testes, mas o
+   webhook ainda envia a resposta diretamente. Ligar exige um worker a correr
+   no servidor; decidir antes como o serviço é executado em produção.
+2. **Mesma etapa em três lugares** (agente de contentor, de carrinha e backend
+   `PedidoV24Agent`). Extrair as regras para módulos partilhados, como
+   `app/agents/pedido_v24/despejo.py`, etapa a etapa.
+3. **Cadastro legado (`AluguerContentor`)**: já não é aberto pelo menu; planear
+   migração dos registos ativos e remoção do código.
+4. **`/dashboard/alugueres/vencendo-amanha` e `/dashboard/lembretes`** só leem
+   o legado (`AluguerContentor`); não incluem pedidos V24.
