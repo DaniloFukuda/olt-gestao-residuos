@@ -497,6 +497,14 @@ class WhatsappRouterAgent:
                 self._format_entrega_hoje(pedido, itens, incluir_horario=True)
                 for pedido, itens in carrinhas
             ))
+        if settings.feature_contentores_enabled:
+            # Prazo de 5 dias termina hoje: não aparece em "amanhã" nem em "vencidos".
+            recolhas = self._contentores_para_recolha_em(pedidos, today)
+            recolhas_legadas = self._alugueres_por_vencimento(alugueres, today)
+            if recolhas or recolhas_legadas:
+                linhas = [self._format_recolha_hoje(pedido, itens) for pedido, itens in recolhas]
+                linhas.extend(self._format_recolha_hoje_aluguer(aluguer) for aluguer in recolhas_legadas)
+                blocos.append("📦 *Recolher Hoje (prazo termina hoje):*\n" + "\n".join(linhas))
         carrinhas_em_atendimento = (
             self._carrinhas_em_atendimento(pedidos)
             if settings.feature_carrinhas_enabled
@@ -766,6 +774,21 @@ class WhatsappRouterAgent:
         if incluir_horario:
             linhas.append(f"  ⏰ Horário: {self._horarios_label(itens)}")
         linhas.append(f"  {self._endereco_linha(pedido)}")
+        return "\n".join(linhas)
+
+    def _format_recolha_hoje(self, pedido: Pedido, itens: list[PedidoContentor]) -> str:
+        numeros = self._format_lista_numeros(self._unique_sorted(self._equipamento_numero(item) for item in itens))
+        linhas = [f"• {pedido.nome_cliente} ({len(itens)} un)", f"  Nºs: {numeros}"]
+        rota = self._rota_gps(pedido, itens[0]) if itens else ""
+        linhas.append(f"  📍 Rota: {rota}" if rota else f"  {self._endereco_linha(pedido)}")
+        return "\n".join(linhas)
+
+    def _format_recolha_hoje_aluguer(self, aluguer: AluguerContentor) -> str:
+        linhas = [f"• {aluguer.nome_cliente} (1 un)", f"  Nºs: {aluguer.numero_contentor}"]
+        latitude = aluguer.entrega_latitude if aluguer.entrega_latitude is not None else aluguer.latitude
+        longitude = aluguer.entrega_longitude if aluguer.entrega_longitude is not None else aluguer.longitude
+        if latitude is not None and longitude is not None:
+            linhas.append(f"  📍 Rota: https://www.google.com/maps?q={latitude},{longitude}")
         return "\n".join(linhas)
 
     def _format_carrinha_amanha(self, pedido: Pedido, itens: list[PedidoContentor]) -> str:

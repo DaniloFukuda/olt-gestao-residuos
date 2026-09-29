@@ -65,6 +65,8 @@ def preparar_blocos(router, monkeypatch):
         lambda _alugueres, _data: [SimpleNamespace(nome_cliente="recolha-legada")],
     )
     monkeypatch.setattr(router, "_format_carrinha_amanha", lambda _pedido, _itens: "carrinha-amanha")
+    monkeypatch.setattr(router, "_format_recolha_hoje", lambda _pedido, _itens: "recolha-hoje")
+    monkeypatch.setattr(router, "_format_recolha_hoje_aluguer", lambda _aluguer: "recolha-hoje-legada")
     monkeypatch.setattr(router, "_contentores_vencidos", lambda _pedidos, _hoje: [(SimpleNamespace(), object(), [])])
     monkeypatch.setattr(router, "_alugueres_vencidos", lambda _alugueres, _hoje: [SimpleNamespace()])
     monkeypatch.setattr(router, "_format_contentor_vencido", lambda *_args: "vencido-moderno")
@@ -91,10 +93,10 @@ def render_operacional(router):
 @pytest.mark.parametrize(
     "contentores,carrinhas,presentes,ausentes",
     [
-        (True, True, ("entrega-contentor", "renovacao-moderna", "renovacao-legada", "recolha-moderna", "recolha-legada", "chegada-carrinha", "carrinha-atendimento", "carrinha-amanha", "vencido-moderno", "vencido-legado"), ()),
-        (True, False, ("entrega-contentor", "renovacao-moderna", "renovacao-legada", "recolha-moderna", "recolha-legada", "vencido-moderno", "vencido-legado"), ("chegada-carrinha", "carrinha-atendimento", "carrinha-amanha")),
-        (False, True, ("chegada-carrinha", "carrinha-atendimento", "carrinha-amanha"), ("entrega-contentor", "renovacao-moderna", "renovacao-legada", "recolha-moderna", "recolha-legada", "vencido-moderno", "vencido-legado")),
-        (False, False, (), ("entrega-contentor", "renovacao-moderna", "renovacao-legada", "recolha-moderna", "recolha-legada", "chegada-carrinha", "carrinha-atendimento", "carrinha-amanha", "vencido-moderno", "vencido-legado")),
+        (True, True, ("entrega-contentor", "renovacao-moderna", "renovacao-legada", "recolha-moderna", "recolha-legada", "recolha-hoje", "chegada-carrinha", "carrinha-atendimento", "carrinha-amanha", "vencido-moderno", "vencido-legado"), ()),
+        (True, False, ("entrega-contentor", "renovacao-moderna", "renovacao-legada", "recolha-moderna", "recolha-legada", "recolha-hoje", "vencido-moderno", "vencido-legado"), ("chegada-carrinha", "carrinha-atendimento", "carrinha-amanha")),
+        (False, True, ("chegada-carrinha", "carrinha-atendimento", "carrinha-amanha"), ("entrega-contentor", "renovacao-moderna", "renovacao-legada", "recolha-moderna", "recolha-legada", "recolha-hoje", "vencido-moderno", "vencido-legado")),
+        (False, False, (), ("entrega-contentor", "renovacao-moderna", "renovacao-legada", "recolha-moderna", "recolha-legada", "recolha-hoje", "chegada-carrinha", "carrinha-atendimento", "carrinha-amanha", "vencido-moderno", "vencido-legado")),
     ],
 )
 def test_quatro_combinacoes_isolam_somente_blocos_operacionais(

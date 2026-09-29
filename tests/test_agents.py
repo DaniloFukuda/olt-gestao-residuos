@@ -1623,7 +1623,10 @@ def test_resumo_lista_retirada_de_hoje_com_cliente_e_localizacao(db_session, mon
     response = WhatsappRouterAgent(db_session).handle(text_message("resumo"))
 
     assert "*1. AÇÕES PARA HOJE*" in response
-    assert "Cliente Retirada Hoje" not in response
+    recolher_hoje = response.split("Recolher Hoje", 1)[1].split("\n\n", 1)[0]
+    assert "• Cliente Retirada Hoje (1 un)" in recolher_hoje
+    assert "Rota: https://www.google.com/maps?q=38.7223,-9.1393" in recolher_hoje
+    assert "Cliente Retirada Amanha" not in recolher_hoje
     assert "Nenhuma ação para hoje." not in response
 
 
@@ -1714,7 +1717,7 @@ def test_resumo_funcionario_nao_mostra_financeiro(db_session, monkeypatch):
     response = WhatsappRouterAgent(db_session).handle(text_message("resumo", telefone="351900000011"))
 
     assert "*2. AÇÕES AGENDADAS PARA OS PRÓXIMOS DIAS*" in response
-    assert "Cliente Retirada Hoje" not in response
+    assert "Recolher Hoje" in response and "Cliente Retirada Hoje" in response
     assert "Faturamento do mes corrente:" not in response
     assert "Faturado total do mes" not in response
     assert "Recebido/pago no mes" not in response
