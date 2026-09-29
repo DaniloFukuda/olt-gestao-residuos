@@ -1,211 +1,113 @@
-# OLT gestão de resíduos & demolições
+# OLT — Gestão Operacional de Contentores e Carrinhas
 
-MVP de automação WhatsApp para gestão de contentores, resíduos e demolições em Portugal.
+Sistema de gestão operacional de uma pequena empresa de resíduos e demolições em Portugal. Toda a operação acontece por conversa no WhatsApp (WhatsApp Cloud API); a API FastAPI recebe o webhook, guarda o estado de cada conversa e aplica as regras de negócio.
 
-Esta primeira versao usa FastAPI, SQLite, SQLAlchemy e agentes deterministicos. O nucleo de dominio nao depende do WhatsApp; a integracao WhatsApp fica limitada ao webhook, parser e cliente da Cloud API.
+O sistema cobre dois serviços:
 
-## Instalar
+- **Contentores:** pedido → entrega (adesivo do contentor, fotos, localização) → recolha → despejo no vazadouro. Prazo de aluguer de 5 dias.
+- **Carrinhas:** pedido → chegada ao cliente → partida (prevista para 2 horas depois da chegada) → despejo.
+
+## Funcionalidades
+
+- **Menu V4 no WhatsApp:** 1. Novo Pedido · 2. Confirmar Chegada/Entrega · 3. Confirmar Recolha/Partida · 4. Confirmar Despejo · 5. Painel de Controle.
+- **Pedidos com vários equipamentos:** um pedido pode ter vários contentores e/ou carrinhas, cada um com resíduo contratado (Entulho Limpo ou Entulho Misto), data planejada e valor global.
+- **Pagamentos:** pago na criação ou pendente; recebimento na entrega regista forma, data e operador.
+- **Pendências:** pagamento pendente, avaria (com fotos) e carga divergente no despejo, com revisão e resolução pelo gestor.
+- **Painel operacional:** ações de hoje, recolhas do dia, atrasos, carrinhas em atendimento, pendências e resumo financeiro.
+- **Perfis:** GESTOR (tudo) e FUNCIONARIO (operação de campo), a partir da tabela `operadores`.
+- **Webhook robusto:** assinatura da Meta (`X-Hub-Signature-256`), deduplicação por `message_id` e fila por telefone para mensagens concorrentes.
+- **Testes automatizados:** domínio, fluxos conversacionais, webhook, migrações e cenários de sistema de ponta a ponta.
+
+## Arquitetura
+
+```text
+WhatsApp Cloud API
+       │  POST /webhook/whatsapp (assinado)
+Webhook FastAPI ── dedup (mensagens_webhook) ── fila por telefone
+       │
+WhatsappRouterAgent ── PedidoV24OperationalRouter ── agentes de fluxo (app/agents/pedido_v24/)
+       │                                              └─ backend legado PedidoV24Agent
+Serviços de domínio (PedidoService, ContentorService, OperadorService…)
+       │
+SQLite + SQLAlchemy
+```
+
+| Camada | Responsabilidade |
+|---|---|
+| `app/routes/` | Webhook WhatsApp, health check e endpoints de painel |
+| `app/agents/` | Roteador de conversa e fluxos (cadastro, entrega, recolha, despejo, pendências) |
+| `app/services/` | Regras de pedido, frota, operadores, deduplicação, fila e outbox |
+| `app/models/` | Entidades persistidas e estados operacionais |
+| `app/integrations/whatsapp/` | Parser de payloads e cliente da Cloud API (botões e listas interativas) |
+| `tests/` | Testes unitários, de fluxo e `tests/system/` (ponta a ponta via webhook) |
+
+Notas para quem for mexer no código estão em [`AGENTS.md`](AGENTS.md); pendências conhecidas em [`PENDENCIAS.md`](PENDENCIAS.md).
+
+## Stack
+
+- Python 3.11+
+- FastAPI e Uvicorn
+- SQLite e SQLAlchemy 2
+- WhatsApp Cloud API
+- Pydantic Settings
+- Pytest e HTTPX
+
+## Operação local
 
 ```bash
 python -m venv .venv
-.venv\Scripts\activate
-pip install -r requirements.txt
+source .venv/bin/activate        # Linux/macOS
+# .venv\Scripts\activate         # Windows
+python -m pip install -r requirements.txt
+python -m uvicorn app.main:app --reload
 ```
 
-## Configurar `.env`
+A API fica disponível em `http://127.0.0.1:8000`.
 
-Crie um arquivo `.env` baseado em `.env.example`:
+Endpoints principais:
 
-```env
-DATABASE_URL=sqlite:///./olt_entulhos.db
-WHATSAPP_VERIFY_TOKEN=troque-este-token
-WHATSAPP_OWNER_PHONE=
-AUTHORIZED_OPERATOR_PHONE=556198266551
-AUTHORIZED_OPERATOR_PHONES=
-WHATSAPP_ACCESS_TOKEN=
-WHATSAPP_PHONE_NUMBER_ID=
-WHATSAPP_API_VERSION=v25.0
-ENV=development
-```
+- `GET /health`
+- `GET /webhook/whatsapp` — verificação do webhook pela Meta
+- `POST /webhook/whatsapp` — recebimento de mensagens
+- `GET /dashboard/contentores`
+- `GET /dashboard/alugueres/vencendo-amanha`
+- `GET /dashboard/lembretes`
 
-Nao use tokens reais em repositorio e nao commite `.env`.
+## Configuração
 
-Numeros importantes:
+Crie um `.env` a partir de `.env.example`. Variáveis principais:
 
-- `WHATSAPP_PHONE_NUMBER_ID` e o ID do numero na Meta, por exemplo `1148807428322172`. Ele nao e o numero que envia comandos.
-- O numero do bot/API, exibido como `display_phone_number`, e diferente do numero do operador.
-- `AUTHORIZED_OPERATOR_PHONE` deve ser o numero de quem envia comandos para o bot. Exemplo correto: `AUTHORIZED_OPERATOR_PHONE=556198266551`.
-- Para varios operadores, use `AUTHORIZED_OPERATOR_PHONES=556198266551,351XXXXXXXXX`.
-- `WHATSAPP_OWNER_PHONE` e `OWNER_WHATSAPP` ainda funcionam por compatibilidade.
-- Os numeros sao comparados normalizados: `+`, espacos, hifens e parenteses sao ignorados.
+| Variável | Uso |
+|---|---|
+| `DATABASE_URL` | Banco SQLite |
+| `WHATSAPP_VERIFY_TOKEN` | Token de verificação do webhook (GET da Meta) |
+| `WHATSAPP_APP_SECRET` | App Secret da Meta. Com ele preenchido o webhook exige assinatura válida. **Preencha em produção.** |
+| `WHATSAPP_ACCESS_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID` | Credenciais de envio da Cloud API |
+| `AUTHORIZED_OPERATOR_PHONES` | Telefones com acesso de gestor quando a tabela `operadores` está vazia (fallback) |
+| `FLUXO_TIMEOUT_MINUTOS` | Minutos até um fluxo abandonado expirar (padrão 120) |
+| `FEATURE_CONTENTORES_ENABLED`, `FEATURE_CARRINHAS_ENABLED`, `FEATURE_AVARIAS_ENABLED` | Liga/desliga serviços |
+| `ENV` | `test` força o envio em modo simulado |
 
-## Envio WhatsApp
+Quando as credenciais da Cloud API não estão configuradas, ou quando `ENV=test`, o cliente de envio trabalha em modo simulado. Nunca use números, tokens ou IDs reais em fixtures, exemplos ou commits.
 
-O envio real usa a WhatsApp Cloud API quando todas as condicoes abaixo forem verdadeiras:
-
-```text
-ENV != test
-WHATSAPP_ACCESS_TOKEN preenchido
-WHATSAPP_PHONE_NUMBER_ID preenchido
-```
-
-Endpoint usado:
-
-```text
-https://graph.facebook.com/{WHATSAPP_API_VERSION}/{WHATSAPP_PHONE_NUMBER_ID}/messages
-```
-
-Quando `ENV=test`, ou quando token/phone number id estiverem vazios, o envio fica em modo mock e retorna `status: mocked`.
-
-Nunca coloque token real no README, nos testes ou no repositorio. Mantenha apenas no `.env` local/seguro.
-
-## Rodar localmente
+Para cadastrar gestores iniciais:
 
 ```bash
-uvicorn app.main:app --reload
+python scripts/cadastrar_gestores_lucas_secretario.py 351900000001:Lucas 351900000002:Secretario
+# ou OLT_GESTORES="351900000001:Lucas;351900000002:Secretario"
 ```
 
-API local: http://127.0.0.1:8000
-
-## Setup local automatizado
-
-Para ajustar `.env`, validar testes, subir o servidor local, testar o webhook e preparar um commit seguro:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File scripts/setup_local_olt_entulhos.ps1
-```
-
-Para validar tambem uma URL publica do Ngrok:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File scripts/setup_local_olt_entulhos.ps1 -NgrokUrl "https://eraser-badland-roaming.ngrok-free.dev"
-```
-
-O script cria backup `.env.backup_YYYYMMDD_HHMMSS`, mas `.env` e backups nunca devem ser commitados.
-
-## Smoke Test Do Fluxo WhatsApp
-
-Para simular o fluxo completo de novo aluguer via `POST /webhook/whatsapp`:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File scripts/simulate_whatsapp_aluguer_flow.ps1
-```
-
-Tambem pode indicar URL base, remetente e nome de perfil:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File scripts/simulate_whatsapp_aluguer_flow.ps1 -BaseUrl "http://127.0.0.1:8000" -From "556198266551" -ProfileName "Danilo Fukuda"
-```
-
-Atencao: este script envia payloads fake para o webhook local. Por padrao ele forca mock com o header `X-OLT-Mock-Whatsapp=true`, sem alterar `.env`. Se rodar com `-AllowRealSend` e o client estiver em modo real (`ENV=development` com `WHATSAPP_ACCESS_TOKEN` e `WHATSAPP_PHONE_NUMBER_ID` preenchidos), o sistema pode responder pelo WhatsApp real. O script nao altera `.env`, nao imprime token e nao faz commit.
-
-Para resetar somente os dados locais de demonstracao:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File scripts/reset_local_demo_state.ps1
-```
-
-O reset apaga conversas, alugueres e eventos, e recoloca `C01` a `C20` como `disponivel`. Ele nao toca no `.env`, tokens, estrutura do banco, backups ou media.
-
-## Testar webhook GET da Meta
+## Testes
 
 ```bash
-curl "http://127.0.0.1:8000/webhook/whatsapp?hub.mode=subscribe&hub.verify_token=troque-este-token&hub.challenge=12345"
+python -m pytest -q                 # suíte completa
+python -m pytest -q tests/system    # cenários de ponta a ponta via webhook
 ```
 
-Resposta esperada:
+## Segurança e privacidade
 
-```text
-12345
-```
+O repositório não deve conter `.env`, tokens, chaves privadas, bancos locais, uploads, fotografias ou dados pessoais reais (RGPD). Antes de publicar alterações, revise os arquivos staged e execute a suíte de testes.
 
-## Rodar testes
+## Deploy
 
-```bash
-pytest
-```
-
-## Fluxo principal
-
-1. Lucas envia `novo`.
-2. O sistema escolhe automaticamente o primeiro contentor disponivel entre `C01` e `C20`.
-3. O bot pede foto do contentor no local.
-4. O bot pede localizacao.
-5. O bot pede nome do cliente.
-6. O bot pede telefone do cliente.
-7. O bot pede valor.
-8. O bot pergunta se esta pago.
-9. O bot pergunta forma de pagamento.
-10. O sistema registra o aluguer, cria eventos, marca o contentor como `alugado`, calcula vencimento em 5 dias e deixa a conversa como `confirmado`.
-
-Estados do fluxo:
-
-```text
-aguardando_foto_entrega
-aguardando_localizacao
-aguardando_nome_cliente
-aguardando_telefone_cliente
-aguardando_valor
-aguardando_pago
-aguardando_forma_pagamento
-confirmado
-```
-
-## Testar fluxo local do WhatsApp
-
-Com o servidor rodando, envie payloads simulados para `POST /webhook/whatsapp`. Em modo mock a resposta inclui as mensagens que seriam enviadas; com credenciais preenchidas, ela retorna o status da chamada real.
-
-Iniciar novo aluguer:
-
-```bash
-curl -X POST "http://127.0.0.1:8000/webhook/whatsapp" \
-  -H "Content-Type: application/json" \
-  -d "{\"entry\":[{\"changes\":[{\"value\":{\"messages\":[{\"from\":\"351900000000\",\"id\":\"m1\",\"type\":\"text\",\"text\":{\"body\":\"novo\"}}]}}]}]}"
-```
-
-Enviar foto:
-
-```bash
-curl -X POST "http://127.0.0.1:8000/webhook/whatsapp" \
-  -H "Content-Type: application/json" \
-  -d "{\"entry\":[{\"changes\":[{\"value\":{\"messages\":[{\"from\":\"351900000000\",\"id\":\"m2\",\"type\":\"image\",\"image\":{\"id\":\"foto-123\",\"mime_type\":\"image/jpeg\"}}]}}]}]}"
-```
-
-Enviar localizacao:
-
-```bash
-curl -X POST "http://127.0.0.1:8000/webhook/whatsapp" \
-  -H "Content-Type: application/json" \
-  -d "{\"entry\":[{\"changes\":[{\"value\":{\"messages\":[{\"from\":\"351900000000\",\"id\":\"m3\",\"type\":\"location\",\"location\":{\"latitude\":38.7223,\"longitude\":-9.1393}}]}}]}]}"
-```
-
-Depois envie mensagens de texto na mesma estrutura para:
-
-```text
-Cliente Teste
-351911111111
-150,50
-sim
-mbway
-```
-
-Se `AUTHORIZED_OPERATOR_PHONE`, `AUTHORIZED_OPERATOR_PHONES`, `WHATSAPP_OWNER_PHONE` ou `OWNER_WHATSAPP` estiverem definidos no `.env`, apenas esses telefones podem iniciar o fluxo com `novo`.
-
-## Comandos WhatsApp
-
-Comandos operacionais disponíveis para a demo:
-
-- `novo`: inicia o registo de um novo aluguer.
-- `resumo`: mostra totais de contentores, alugueres ativos, vencimentos de amanhã e atrasos.
-- `lista`: lista todos os contentores `C01` a `C20` com o respetivo status.
-- `disponiveis`: lista apenas contentores disponíveis.
-- `alugados`: lista contentores alugados com cliente, vencimento e status do aluguer.
-- `vencendo`: lista alugueres com vencimento amanhã.
-- `atrasados`: lista alugueres ativos com vencimento anterior a hoje.
-
-## Proximos passos
-
-- Baixar e armazenar midias recebidas do WhatsApp.
-- Adicionar autenticacao para rotas de dashboard.
-- Criar jobs periodicos para envio automatico de lembretes.
-- Expandir comandos de renovacao, recolha e consulta por WhatsApp.
+A aplicação é uma API ASGI e pode ser executada com Uvicorn atrás de um proxy reverso. Em produção, configure `WHATSAPP_APP_SECRET` para que só a Meta consiga chamar o webhook. Configurações de infraestrutura, credenciais e dados operacionais ficam fora do repositório.
