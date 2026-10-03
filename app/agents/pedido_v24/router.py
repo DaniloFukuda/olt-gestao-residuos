@@ -1,7 +1,10 @@
 """Seam de delegação para o backend legado do Pedido V24."""
 
+from dataclasses import replace
 from datetime import datetime
+import re
 import unicodedata
+from zoneinfo import ZoneInfo
 
 from sqlalchemy.orm import Session
 
@@ -40,6 +43,7 @@ from app.agents.pedido_v24.carrinha import (
     PrepararConformidadeDespejoCarrinha,
     PrepararFotoDespejoCarrinha,
 )
+from app.agents.pedido_v24 import opcoes
 from app.agents.pedido_v24.modality import resolve_operational_modality
 from app.agents.pedido_v24.transitions import AdvanceTransition, IdleTransition
 from app.agents.pedido_v24_agent import PedidoV24Agent
@@ -118,7 +122,7 @@ class PedidoV24OperationalRouter:
         o "2" como sempre. Vale para contentor e carrinha (mesmos estados).
         """
         estado = getattr(conversa, "estado_atual", None)
-        if estado not in FOTO_STATES or message.tipo != "text":
+        if estado not in FOTO_STATES or message.tipo not in {"text", "interactive"}:
             return
         normalized = unicodedata.normalize("NFKD", message.texto or "")
         choice = "".join(c for c in normalized if not unicodedata.combining(c)).strip().lower()
@@ -144,6 +148,61 @@ class PedidoV24OperationalRouter:
         message: NormalizedWhatsAppMessage,
     ) -> str:
         self._avancar_foto_ja_enviada(conversa, message)
+        pergunta, message = self._traduzir_opcao(conversa, message)
+        if pergunta is not None:
+            return pergunta
+        resposta = self._handle(conversa, message)
+        return self._com_contentores_disponiveis(conversa, resposta)
+
+    @staticmethod
+    def _traduzir_opcao(conversa, message):
+        """Converte respostas tocadas no texto que os tratadores já aceitam.
+
+        Ver app/agents/pedido_v24/opcoes.py. Na etapa do número do
+        contentor/frota, respostas de botão/lista passam a texto ("adesivo:7"
+        vira "7"; "Sem frota" chega como "0"), porque os tratadores dessa
+        etapa recusam respostas interativas.
+        """
+        estado = getattr(conversa, "estado_atual", None) or ""
+        if estado != "v24_entrega_adesivo" and not estado.startswith("v24_cadastro_"):
+            return None, message
+        texto = (getattr(message, "texto", None) or "").strip()
+        if estado == "v24_entrega_adesivo":
+            if texto == opcoes.DIGITAR:
+                return opcoes.ADESIVO_DIGITAR, message
+            match = re.fullmatch(r"adesivo:(\d+)", texto)
+            if match or getattr(message, "tipo", None) == "interactive":
+                novo = match.group(1) if match else texto
+                return None, replace(message, tipo="text", texto=novo)
+            return None, message
+        settings = get_settings()
+        hoje = datetime.now(ZoneInfo(getattr(settings, "timezone", "Europe/Lisbon"))).date()
+        contexto = getattr(conversa, "contexto_json", None) or {}
+        pergunta, traduzido = opcoes.traduzir_resposta(estado, contexto, texto, hoje)
+        if pergunta is not None:
+            return pergunta, message
+        if traduzido is not None:
+            return None, replace(message, tipo="text", texto=traduzido)
+        return None, message
+
+    def _com_contentores_disponiveis(self, conversa, resposta):
+        """Na etapa do número do contentor, lista os disponíveis na frota.
+
+        O cliente WhatsApp transforma a linha "Contentores disponíveis: ..."
+        numa lista tocável (id adesivo:N) com "✏️ Outro número" no fim.
+        """
+        if not isinstance(resposta, str) or getattr(conversa, "estado_atual", None) != "v24_entrega_adesivo":
+            return resposta
+        numeros = self._backend.numeros_frota_para_entrega(getattr(conversa, "contexto_json", None) or {})
+        if not isinstance(numeros, list) or not numeros:
+            return resposta
+        return f"{resposta}\n\nContentores disponíveis: {', '.join(numeros)}"
+
+    def _handle(
+        self,
+        conversa: ConversaWhatsApp,
+        message: NormalizedWhatsAppMessage,
+    ) -> str:
         carrinha_response = self._handle_carrinha_cadastro(conversa, message)
         if carrinha_response is not None:
             return carrinha_response

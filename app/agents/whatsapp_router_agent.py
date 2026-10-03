@@ -1391,7 +1391,9 @@ class WhatsappRouterAgent:
         contentores = self.contentor_service.listar_contentores()
         if not contentores:
             return "Ainda não existem contentores registados."
-        return "\n".join(f"{contentor.codigo} - {self._format_contentor_status(contentor.status)}" for contentor in contentores)
+        # "•" no início: listagem informativa, não opções (o cliente WhatsApp
+        # transformaria "1 - ...", "2 - ..." em lista tocável).
+        return "\n".join(f"• {contentor.codigo} - {self._format_contentor_status(contentor.status)}" for contentor in contentores)
 
     def _disponiveis(self) -> str:
         contentores = [
@@ -1448,7 +1450,7 @@ class WhatsappRouterAgent:
     def _format_item_v24(self, pedido: Pedido, item: PedidoContentor) -> str:
         vencimento = self._local_date(item.entrega_data_hora) + timedelta(days=5)
         return (
-            f"{self._equipamento_numero(item)} - {pedido.nome_cliente} - "
+            f"• {self._equipamento_numero(item)} - {pedido.nome_cliente} - "
             f"vencimento {vencimento:%d/%m/%Y} - pedido #{pedido.id}"
         )
 
@@ -2009,7 +2011,7 @@ class WhatsappRouterAgent:
     def _format_aluguer(self, aluguer: AluguerContentor) -> str:
         vencimento = aluguer.data_vencimento.strftime("%d/%m/%Y")
         return (
-            f"{aluguer.contentor.codigo} - {aluguer.nome_cliente} - "
+            f"• {aluguer.contentor.codigo} - {aluguer.nome_cliente} - "
             f"vencimento {vencimento} - {self._format_aluguer_status(aluguer.status)}"
         )
 

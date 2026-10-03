@@ -30,7 +30,8 @@ python -m pytest -q tests/system    # webhook de ponta a ponta
 
 - `tests/system/test_ponta_a_ponta.py` opera 22 pedidos (12 de contentor, 10
   de carrinha) do cadastro ao despejo pelo `POST /webhook/whatsapp`, com
-  gestor e motorista. **Rode-o depois de qualquer mudança de fluxo.** Os
+  gestor e motorista, **respondendo por toques** nos botões/listas que o
+  WhatsApp mostraria; o teste falha se uma escolha exigir digitação. **Rode-o depois de qualquer mudança de fluxo.** Os
   helpers (`cadastrar`, `entregar_contentores`, `recolher`, `despejar`...)
   documentam a sequência exata de mensagens de cada fluxo.
 - `tests/characterization/` fixa comportamento existente. Se uma mudança
@@ -72,12 +73,21 @@ POST /webhook/whatsapp (app/routes/webhook.py)
 4. **Duas gerações de dados:** `Pedido`/`PedidoContentor` (V24, atual) e
    `AluguerContentor` (cadastro unitário legado). O legado só atende conversas
    que já estavam nele; relatórios e painel somam os dois.
-5. **Cliente WhatsApp** (`app/integrations/whatsapp/client.py`) transforma
-   opções numeradas do texto em botões (≤3, título ≤20) ou lista (≤10 linhas,
-   título ≤24, descrição ≤72). Acima disso vai texto. O parser devolve o id do
-   botão/linha; `option_N` vira `N`. Alguns prompts têm ids próprios
-   (`despejo_residuo:limpo`, `despejo_conformidade:sim`, `entrega_pedido:ID`,
-   `corrigir_pedido:campo`) reconhecidos pelos agentes.
+5. **Cliente WhatsApp** (`app/integrations/whatsapp/client.py`) transforma o
+   **último bloco** de opções numeradas do texto (1., 2., 3....) em botões
+   (até 3 opções, título ≤20, sem descrição) ou lista (≤10 linhas, título ≤24,
+   descrição ≤72); acima de 10 opções manda listas seguidas, divididas por
+   igual. Corpo acima de 1024 caracteres vai antes, em texto, e as opções
+   seguem numa mensagem curta. Só o menu principal sai como texto (decisão do
+   Danilo, mantida em 03/10/2026). O parser devolve o id do botão/linha:
+   `option_N` vira `N`; datas e horários levam o próprio valor
+   (`05/10/2026`, `09:00`); opções "✏️ ..." levam `digitar`. Outros prompts
+   têm ids próprios (`despejo_residuo:limpo`, `despejo_conformidade:sim`,
+   `entrega_pedido:ID`, `corrigir_pedido:campo`, `adesivo:N`).
+   **Para uma pergunta nova virar botão/lista basta escrever as opções como
+   linhas numeradas no fim do texto.** Respostas tocadas que os tratadores não
+   entendem são traduzidas em `PedidoV24OperationalRouter._traduzir_opcao`
+   (ver `app/agents/pedido_v24/opcoes.py`).
 6. **Outbox** (`whatsapp_outbox_service.py`/`worker.py`) existe mas **não está
    ligada**: o webhook envia a resposta diretamente. Ver PENDENCIAS.
 7. **Frota:** tabela `contentores`, semeada com 1–20 no arranque
@@ -97,6 +107,7 @@ POST /webhook/whatsapp (app/routes/webhook.py)
 | Cancelar | `cancelar`/`sair`/`parar`/`voltar`/`0` no meio de uma operação pedem confirmação (1 Sim / 2 Não, continuar). | estado `confirmar_cancelamento` |
 | Dados públicos | Nada de telefones, IDs da Meta, tokens ou nomes reais no repositório. | scripts e testes |
 | Dashboard | `/dashboard/*` exige `X-Dashboard-Token` = `DASHBOARD_TOKEN`; sem token configurado, 404. | `app/routes/dashboard.py` |
+| Toques, não digitação (03/10/2026) | Toda pergunta com respostas padronizadas vira botões (prioridade) ou lista: tipo (Contentor/Carrinha), quantidade (1, 2, 3, "✏️ 4 ou mais"), dia (Hoje/Amanhã/Outra data → próximos 8 dias), horário da carrinha (08:00–16:00 + "✏️ Outro horário"), número do contentor (lista dos disponíveis na frota + "✏️ Outro número"), "Sem frota", avaria, pagamento, confirmações e "Corrigir" (10 linhas: "Pagamento" junta status e forma; na carrinha, dia e hora juntos). Digita-se só dado livre (nome, telefone, valor, endereço, relatos). O menu principal continua texto. | `pedido_v24/opcoes.py`, `client.py`, `router._traduzir_opcao` |
 
 Antes destas: pagamento na entrega regista data e operador; divergências de
 carga e pagamentos pendentes só aparecem ao gestor no painel.
@@ -128,7 +139,9 @@ pagamento; colisão de IDs em `resolver`; payload malformado; comandos
 "entrega"/"recolha"; divergência pelo total do pedido; frota; "novo" → Novo
 Pedido; expiração; financeiro; confirmação de cancelamento; "Próximo passo"
 nas fotos; limites da Cloud API; dados fictícios; token do dashboard; cargas
-no painel; teste de ponta a ponta.
+no painel; teste de ponta a ponta. Depois do merge (PR #6/#7): o Danilo
+exigiu `WHATSAPP_APP_SECRET` em produção e criou o CI (`.github/workflows/
+pytest.yml`); em 03/10/2026 as perguntas passaram a botões e listas.
 
 ## 6. Convenções
 

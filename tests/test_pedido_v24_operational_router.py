@@ -44,6 +44,7 @@ from app.agents.pedido_v24.carrinha import (
 from app.agents.pedido_v24.modality import resolve_operational_modality
 from app.agents.pedido_v24.router import PedidoV24OperationalRouter
 from app.agents.pedido_v24.transitions import AdvanceTransition, IdleTransition
+from app.agents.pedido_v24 import opcoes
 from app.agents.pedido_v24_agent import PedidoV24Agent
 from app.agents.whatsapp_router_agent import WhatsappRouterAgent
 from app.integrations.whatsapp.parser import NormalizedWhatsAppMessage
@@ -1655,7 +1656,7 @@ def test_foto_acao_continuar_com_proximo_contentor_preserva_transicao():
         "v24_entrega_adesivo",
         {**context, "indice": 1},
         "Contentor 1 de 2 registrado.\n\nVamos registrar o próximo.\n\n"
-        "Digite o número do contentor que está a descarregar agora:",
+        "Qual o número do contentor que está a descarregar agora?",
     )
     assert context["indice"] == 0
     backend.db.commit.assert_not_called()
@@ -3629,7 +3630,7 @@ def test_contentor_recolha_proximo_passo_com_avarias_on():
     assert decision.next_state == "v24_recolha_avaria"
     assert decision.response == (
         "O equipamento sofreu algum estrago ou avaria na obra?\n\n"
-        "1. ✅ Não, está perfeito\n2. 💥 Sim, está estragado"
+        "1. ✅ Sem avaria\n2. 💥 Com avaria"
     )
 
 
@@ -4173,7 +4174,8 @@ def test_router_selecao_moderna_carrinha_entra_no_novo_agente(db_session, choice
 
     resposta = router.handle(conversa, mensagem(choice))
 
-    assert resposta == "🔢 Quantas carrinhas são necessárias para este pedido?"
+    # Quantidade com opções tocáveis 1, 2, 3 e "4 ou mais" (ver pedido_v24/opcoes.py).
+    assert resposta == opcoes.quantidade_prompt(carrinha=True)
     assert conversa.contexto_json == {"tipo_solicitacao": "CARRINHA"}
     backend.handle.assert_not_called()
 

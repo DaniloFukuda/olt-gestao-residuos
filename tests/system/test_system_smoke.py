@@ -81,7 +81,7 @@ def test_sys_006_cadastro_completo_de_um_contentor_pago(system_app, gestor, fake
         ("1", "v24_cadastro_mao_obra", "pessoal"),
         ("2", "v24_cadastro_residuo", "Res"),
         ("1", "v24_cadastro_data", "Quando"),
-        ("3", "v24_cadastro_data_manual", "DD/MM/AAAA"),
+        ("3", "v24_cadastro_data_manual", "Outra data"),
         ("31/12/2030", "v24_cadastro_valor", "valor"),
         ("100", "v24_cadastro_pago", "pago"),
         ("1", "v24_cadastro_forma", "forma"),

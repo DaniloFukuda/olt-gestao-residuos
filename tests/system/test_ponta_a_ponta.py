@@ -1,7 +1,7 @@
 """Operação completa pelo WhatsApp, do pedido ao despejo, via webhook.
 
 Cenário: um gestor cadastra 12 pedidos de contentor (18 contentores) e 10 de
-carrinha (12 carrinhas); um motorista faz entrega/chegada, recolha/partida e
+carrinha (15 carrinhas); um motorista faz entrega/chegada, recolha/partida e
 despejo de todos. Pelo caminho aparecem pagamentos na criação, na entrega e
 pelo gestor depois, dívidas que continuam em aberto, avarias, contentores
 trocados dentro do pedido (sem divergência), divergências de carga, número
@@ -10,6 +10,12 @@ fora da frota, cancelamento desistido e o painel do gestor.
 Tudo passa pelo POST /webhook/whatsapp (parser, deduplicação, fila por
 telefone, roteador e agentes). O envio à Meta é substituído pelo
 FakeMetaClient, que guarda o texto que seria enviado.
+
+As escolhas são feitas **tocando** nos botões e listas que o WhatsApp
+mostraria (ids calculados pelo cliente real a partir do texto enviado). Só
+se digita o que é dado livre: nome, telefone, valor, endereço, relatos,
+quantidade "4 ou mais", horário fora da lista e o menu principal (que é
+texto por decisão do Danilo). Ver regra de UX em pedido_v24/opcoes.py.
 """
 
 import re
@@ -18,6 +24,7 @@ from decimal import Decimal
 
 from sqlalchemy import func
 
+from app.integrations.whatsapp.client import send_whatsapp_message
 from app.models.aluguer import ContentorFoto
 from app.models.contentor import Contentor, StatusContentor
 from app.models.pedido import (
@@ -34,11 +41,9 @@ from app.services.seed_service import SeedService
 from tests.system.helpers.conversation_driver import ConversationDriver
 from tests.system.helpers.fake_whatsapp_user import FakeWhatsAppUser
 
+from app.agents.pedido_v24.opcoes import HORARIOS
+
 RESIDUO = {"L": "Entulho Limpo", "M": "Entulho Misto"}
-OPCAO_RESIDUO = {"L": "1", "M": "2"}
-# Listas do WhatsApp: forma no cadastro/entrega e forma no fluxo do gestor.
-FORMA_CADASTRO = {"MBWay": "1", "Transferência": "2", "Dinheiro": "3"}
-FORMA_GESTOR = {"Dinheiro": "1", "MBWay": "2", "Transferência": "3"}
 
 
 @dataclass
@@ -57,6 +62,7 @@ class PedidoE2E:
     avaria: str | None = None  # relato na recolha/partida (pedidos de 1 equipamento)
     horario: str = "09:00"
     mao_de_obra: bool = False
+    outra_data: bool = False
     id: int | None = None
     extras: dict = field(default_factory=dict)
 
@@ -86,7 +92,7 @@ def _contentores() -> list[PedidoE2E]:
         PedidoE2E("Obra C06", "contentor", ["L", "M", "M"], 380, "pago:Dinheiro", ["8", "9", "10"], ["L", "M", "M"]),
         PedidoE2E("Obra C07", "contentor", ["M"], 100, "entrega:MBWay", ["11"], ["M"], mao_de_obra=True),
         PedidoE2E("Obra C08", "contentor", ["L"], 110, "pago:MBWay", ["12"], ["nao:L:limpo mas com terra vegetal"]),
-        PedidoE2E("Obra C09", "contentor", ["M", "L"], 240, "pendente", ["13", "14"], ["L", "M"]),
+        PedidoE2E("Obra C09", "contentor", ["M", "L"], 240, "pendente", ["13", "14"], ["L", "M"], outra_data=True),
         PedidoE2E("Obra C10", "contentor", ["L"], 95, "pago:Dinheiro", ["15"], ["L"], avaria="roda partida no eixo"),
         PedidoE2E("Obra C11", "contentor", ["M", "M"], 210, "entrega:Transferência", ["16", "17"], ["M", "M"]),
         PedidoE2E("Obra C12", "contentor", ["L"], 130, "pago:Transferência", ["18"], ["L"]),
@@ -110,7 +116,11 @@ def _carrinhas() -> list[PedidoE2E]:
         PedidoE2E("Obra K07", "carrinha", ["L", "L"], 300, "gestor:MBWay", ["8", "9"], ["L", "L"], horario="14:00"),
         PedidoE2E("Obra K08", "carrinha", ["M"], 170, "pago:MBWay", ["0"], ["M"], horario="15:00"),
         PedidoE2E("Obra K09", "carrinha", ["L"], 150, "pago:Transferência", ["11"], ["L"], horario="16:00"),
-        PedidoE2E("Obra K10", "carrinha", ["M"], 190, "pendente", ["12"], ["M"], horario="17:00"),
+        # 4 carrinhas: "✏️ 4 ou mais" + quantidade digitada.
+        PedidoE2E(
+            "Obra K10", "carrinha", ["M", "M", "M", "M"], 190, "pendente", ["12", "0", "14", "0"],
+            ["M", "M", "M", "M"], horario="17:00",
+        ),
     ]
 
 
@@ -127,6 +137,8 @@ class Operador:
         app, SessionLocal, _ids = system_app
         self.driver = ConversationDriver(app, SessionLocal, FakeWhatsAppUser(telefone, cenario), fake_meta)
         self._fotos = 0
+        self.digitados: list[str] = []
+        self.toques = 0
 
     def _checar(self, response) -> str:
         assert response.status_code == 200, response.text
@@ -134,8 +146,46 @@ class Operador:
         assert dados.get("failed", 0) == 0, dados
         return "\n".join(self.driver.last_bodies())
 
-    def t(self, texto: str) -> str:
+    def comando(self, texto: str) -> str:
+        """Menu principal (texto por decisão) e comandos do gestor."""
         return self._checar(self.driver.send_text(texto))
+
+    def digitar(self, texto: str) -> str:
+        """Dado livre: nome, telefone, valor, endereço, relato..."""
+        self.digitados.append(texto)
+        return self._checar(self.driver.send_text(texto))
+
+    def opcoes(self) -> list[dict]:
+        """Botões e linhas de lista que o WhatsApp mostraria na última resposta."""
+        opcoes = []
+        for body in self.driver.last_bodies():
+            enviado = send_whatsapp_message(self.driver.user.phone, body, force_mock=True)
+            for parte in [enviado, *(enviado.get("additional_messages") or [])]:
+                opcoes.extend(parte.get("buttons") or parte.get("list_rows") or [])
+        return opcoes
+
+    def tocar(self, alvo: str, *, exceto: str | None = None) -> str:
+        """Toca na opção cujo id é ``alvo`` ou cujo título contém ``alvo``."""
+        opcoes = self.opcoes()
+        assert opcoes, f"A pergunta não tem opções tocáveis:\n{self.driver.last_bodies()}"
+        escolhida = next((o for o in opcoes if o["id"] == alvo), None) or next(
+            (o for o in opcoes if alvo in (o["title"] + o.get("description", "")) and (not exceto or exceto not in o["title"])),
+            None,
+        )
+        assert escolhida, f"{alvo!r} não está entre {[o['title'] for o in opcoes]}"
+        self.toques += 1
+        return self._checar(self.driver.send_list_reply(escolhida["id"], escolhida["title"]))
+
+    def tocar_primeiro(self, exceto: str) -> str:
+        opcoes = [o for o in self.opcoes() if exceto not in o["title"]]
+        assert opcoes, self.driver.last_bodies()
+        self.toques += 1
+        return self._checar(self.driver.send_list_reply(opcoes[0]["id"], opcoes[0]["title"]))
+
+    def tocar_botao_anterior(self, reply_id: str, titulo: str) -> str:
+        """Toca num botão de uma mensagem anterior (continua visível na conversa)."""
+        self.toques += 1
+        return self._checar(self.driver.send_button_reply(reply_id, titulo))
 
     def foto(self) -> str:
         self._fotos += 1
@@ -144,141 +194,169 @@ class Operador:
     def local(self) -> str:
         return self._checar(self.driver.send_location(38.7223, -9.1393))
 
-    def escolher(self, resposta: str, nome: str) -> str:
-        opcao = re.search(rf"(?m)^\s*(\d+)\.\s+.*?{re.escape(nome)}\b", resposta)
-        assert opcao, f"{nome!r} não está na lista:\n{resposta}"
-        return self.t(opcao.group(1))
-
 
 def cadastrar(gestor: Operador, pedido: PedidoE2E) -> None:
-    gestor.t("1")
+    gestor.digitados = []
+    gestor.comando("1")
+    plural = "contentor" if pedido.tipo == "contentor" else "carrinha"
+    quantidade = len(pedido.residuos)
+    esperados = [pedido.nome, "912345678", str(pedido.valor), f"Rua da {pedido.nome}, Lisboa"]
     if pedido.tipo == "contentor":
-        gestor.t("1")
-        gestor.t(pedido.nome)
-        gestor.t("912345678")
-        gestor.t(str(len(pedido.residuos)))
-        gestor.t("1" if pedido.mao_de_obra else "2")
-        for residuo in pedido.residuos:
-            gestor.t(OPCAO_RESIDUO[residuo])
-        gestor.t("1")  # Hoje
+        gestor.tocar("Contentor")
+        gestor.digitar(pedido.nome)
+        gestor.digitar("912345678")
     else:
-        gestor.t("2")
-        gestor.t(str(len(pedido.residuos)))
-        gestor.t(pedido.nome)
-        gestor.t("912345679")
-        gestor.t("1")  # Hoje
-        gestor.t(pedido.horario)
+        gestor.tocar("Carrinha")
+    if quantidade <= 3:
+        gestor.tocar(f"{quantidade} {plural}")
+    else:
+        assert "Digite a quantidade" in gestor.tocar("4 ou mais")
+        gestor.digitar(str(quantidade))
+        esperados.append(str(quantidade))
+    if pedido.tipo == "contentor":
+        gestor.tocar("Sim" if pedido.mao_de_obra else "Não")
         for residuo in pedido.residuos:
-            gestor.t(OPCAO_RESIDUO[residuo])
-        gestor.t("1" if pedido.mao_de_obra else "2")
-    gestor.t(str(pedido.valor))
+            gestor.tocar(RESIDUO[residuo])
+        if pedido.outra_data:
+            assert "Qual o dia da entrega?" in gestor.tocar("Outra data")
+            gestor.tocar_primeiro(exceto="Outra data")
+        else:
+            gestor.tocar("Hoje")
+    else:
+        gestor.digitar(pedido.nome)
+        gestor.digitar("912345678")
+        gestor.tocar("Hoje")
+        if pedido.horario in HORARIOS:
+            gestor.tocar(pedido.horario)
+        else:
+            assert "Digite o horário" in gestor.tocar("Outro horário")
+            gestor.digitar(pedido.horario)
+            esperados.append(pedido.horario)
+        for residuo in pedido.residuos:
+            gestor.tocar(RESIDUO[residuo])
+        gestor.tocar("Sim" if pedido.mao_de_obra else "Não")
+    gestor.digitar(str(pedido.valor))
     if pedido.pagamento.startswith("pago:"):
-        gestor.t("1")
-        gestor.t(FORMA_CADASTRO[pedido.forma])
+        gestor.tocar("Sim, já está pago")
+        gestor.tocar(pedido.forma)
     else:
-        gestor.t("2")
-    gestor.t(f"Rua da {pedido.nome}, Lisboa")
-    confirmacao = gestor.t("2")  # sem ponto de referência
+        gestor.tocar("Não, pendente")
+    gestor.digitar(f"Rua da {pedido.nome}, Lisboa")
+    confirmacao = gestor.tocar("Não")  # sem ponto de referência
     assert f"Cliente: {pedido.nome}" in confirmacao
-    criado = gestor.t("1")
+    criado = gestor.tocar("Confirmar e salvar")
     numero = re.search(r"Pedido #(\d+) criado", criado)
     assert numero, criado
     pedido.id = int(numero.group(1))
+    # Só o que é dado livre foi digitado; todas as escolhas foram toques.
+    assert sorted(gestor.digitados) == sorted(esperados), gestor.digitados
 
 
 def entregar_contentores(motorista: Operador, pedido: PedidoE2E) -> None:
-    resposta = motorista.escolher(motorista.t("2"), pedido.nome)
+    motorista.comando("2")
+    resposta = motorista.tocar(pedido.nome)
     for indice, numero in enumerate(pedido.numeros):
+        assert "número do contentor" in resposta
         if pedido.extras.get("numero_fora_da_frota") and indice == 0:
-            recusa = motorista.t(pedido.extras["numero_fora_da_frota"])
+            assert "Digite o número" in motorista.tocar("Outro número")
+            recusa = motorista.digitar(pedido.extras["numero_fora_da_frota"])
             assert "não está cadastrado na frota" in recusa
-        assert "Digite o número do contentor" in resposta
-        assert "Envie a foto" in motorista.t(numero)
+        assert "Envie a foto" in motorista.tocar(f"adesivo:{numero}")
         motorista.foto()
         if pedido.extras.get("foto_extra"):
-            motorista.t("1")  # Outra foto
+            motorista.tocar("Outra Foto")
             motorista.foto()
-        resposta = motorista.t("2")
+        resposta = motorista.tocar("Próximo Passo")
     assert "localização GPS" in resposta
     motorista.local()
-    confirmacao = motorista.t("2")  # sem ponto de referência
+    confirmacao = motorista.tocar("Não")  # sem ponto de referência
     assert "Confirme a entrega preparada" in confirmacao
-    final = motorista.t("1")
+    final = motorista.tocar("Confirmar entrega")
     if pedido.pagamento.startswith("pago:"):
         assert "Entrega confirmada com sucesso" in final
         return
     assert "pagamento no local" in final
     if pedido.pagamento.startswith("entrega:"):
-        motorista.t("1")
-        final = motorista.t(FORMA_CADASTRO[pedido.forma])
+        motorista.tocar("Sim, foi pago")
+        final = motorista.tocar(pedido.forma)
         assert "Pagamento registrado" in final
     else:
-        final = motorista.t("2")
+        final = motorista.tocar("Não, pendente")
         assert "Entrega confirmada com sucesso" in final
 
 
 def chegar_carrinhas(motorista: Operador, pedido: PedidoE2E) -> None:
-    resposta = motorista.escolher(motorista.t("2"), pedido.nome)
+    motorista.comando("2")
+    resposta = motorista.tocar(pedido.nome)
     for numero in pedido.numeros:
         assert "número da frota" in resposta
-        assert "Envie a foto" in motorista.t(numero)
+        if numero == "0":
+            assert "Envie a foto" in motorista.tocar("Sem frota")
+        else:
+            assert "Envie a foto" in motorista.digitar(numero)
         motorista.foto()
-        resposta = motorista.t("2")
+        resposta = motorista.tocar("Próximo Passo")
     assert "localização GPS" in resposta
     motorista.local()
-    motorista.t("2")
-    assert "Chegada da carrinha confirmada" in motorista.t("1")
+    motorista.tocar("Não")
+    assert "Chegada da carrinha confirmada" in motorista.tocar("Confirmar chegada")
 
 
 def recolher(motorista: Operador, pedido: PedidoE2E) -> None:
-    resposta = motorista.escolher(motorista.t("3"), pedido.nome)
+    motorista.comando("3")
+    resposta = motorista.tocar(pedido.nome)
     for _ in pedido.numeros:
         assert "Selecione o ativo para a" in resposta
-        assert "Envie a foto" in motorista.t("1")
+        assert "Envie a foto" in motorista.tocar_primeiro(exceto="Terminar")
         motorista.foto()
         if pedido.extras.get("foto_extra"):
-            motorista.t("1")  # Outra foto... e desiste: "Próximo passo" direto.
-        assert "estrago ou avaria" in motorista.t("2")
+            motorista.tocar("Outra Foto")
+            # Desiste da foto extra: toca "Próximo Passo" da mensagem anterior.
+            pergunta = motorista.tocar_botao_anterior("option_2", "➡️ Próximo Passo")
+        else:
+            pergunta = motorista.tocar("Próximo Passo")
+        assert "estrago ou avaria" in pergunta
         if pedido.avaria:
-            motorista.t("2")
-            confirmacao = motorista.t(pedido.avaria)
+            motorista.tocar("Com avaria")
+            confirmacao = motorista.digitar(pedido.avaria)
             assert f"Relato: {pedido.avaria}" in confirmacao
         else:
-            motorista.t("1")
-        resposta = motorista.t("1")
+            motorista.tocar("Sem avaria")
+        resposta = motorista.tocar("Confirmar")
     assert "concluida" in resposta
 
 
 def despejar(motorista: Operador, pedido: PedidoE2E) -> None:
-    resposta = motorista.escolher(motorista.t("4"), pedido.nome)
+    motorista.comando("4")
+    resposta = motorista.tocar(pedido.nome)
     for passo in pedido.despejo:
         assert "Selecione o ativo descarregado" in resposta
-        pergunta = motorista.t("1")
+        pergunta = motorista.tocar_primeiro(exceto="Terminar")
         if passo.startswith("nao:"):
             _, real, relato = passo.split(":", 2)
             assert "corresponde a" in pergunta
-            assert "caiu de fato no chão" in motorista.t("2")
-            assert "Descreva a divergência" in motorista.t(OPCAO_RESIDUO[real])
-            assert "Envie a foto" in motorista.t(relato)
+            assert "caiu de fato no chão" in motorista.tocar("Não")
+            assert "Descreva a divergência" in motorista.tocar(RESIDUO[real])
+            assert "Envie a foto" in motorista.digitar(relato)
         elif "Qual resíduo caiu no chão?" in pergunta:
-            assert "Envie a foto" in motorista.t(OPCAO_RESIDUO[passo])
+            assert "Envie a foto" in motorista.tocar(RESIDUO[passo])
         else:
             assert f"corresponde a {RESIDUO[passo]}?" in pergunta
-            assert "Envie a foto" in motorista.t("1")
+            assert "Envie a foto" in motorista.tocar("Sim")
         motorista.foto()
-        confirmacao = motorista.t("2")
+        confirmacao = motorista.tocar("Próximo Passo")
         esperado = "Sim" if passo.startswith("nao:") else "Nao"
         assert f"Divergencia: {esperado}" in confirmacao
-        resposta = motorista.t("1")
+        resposta = motorista.tocar("Confirmar despejo")
     assert "concluído" in resposta or "Nenhum" in resposta
 
 
 def registrar_pagamento(gestor: Operador, pedido: PedidoE2E) -> None:
-    lista = gestor.t("registrar pagamento")
-    revisao = gestor.escolher(lista, f"Pedido #{pedido.id} • {pedido.nome}")
+    gestor.comando("registrar pagamento")
+    revisao = gestor.tocar(f"Pedido #{pedido.id} •")
     assert "Escolha a forma" in revisao
-    gestor.t(FORMA_GESTOR[pedido.forma])
-    assert "Pagamento registrado" in gestor.t("1")
+    assert "1. ✅ Confirmar" in gestor.tocar(pedido.forma)
+    assert "Pagamento registrado" in gestor.tocar("Confirmar")
 
 
 def test_operacao_completa_de_22_pedidos_pelo_whatsapp(
@@ -295,20 +373,20 @@ def test_operacao_completa_de_22_pedidos_pelo_whatsapp(
     pedidos = CONTENTORES + CARRINHAS
 
     # 1. Cadastro pelo gestor; motorista não cadastra.
-    assert "não possui permissão" in m.t("novo")
+    assert "não possui permissão" in m.comando("novo")
     for indice, pedido in enumerate(pedidos):
         if indice == 8:
             # Cancelamento pedido por engano e desistido no meio do cadastro.
-            g.t("1")
-            g.t("1")
-            assert "Deseja cancelar" in g.t("voltar")
-            assert "Operação retomada" in g.t("2")
-            g.t("cancelar")
-            assert "Operação cancelada" in g.t("1")
+            g.comando("1")
+            g.tocar("Contentor")
+            assert "Deseja cancelar" in g.comando("voltar")
+            assert "Operação retomada" in g.tocar("Não, continuar")
+            g.comando("cancelar")
+            assert "Operação cancelada" in g.tocar("Sim, cancelar")
         cadastrar(g, pedido)
     db_assertions.assert_pedido_count(22)
-    db_assertions.assert_contentor_count(30)
-    painel = g.t("5")
+    db_assertions.assert_contentor_count(33)
+    painel = g.comando("5")
     assert all(p.nome in painel for p in pedidos)
 
     # 2. Entrega dos contentores e chegada das carrinhas.
@@ -321,7 +399,7 @@ def test_operacao_completa_de_22_pedidos_pelo_whatsapp(
             c.codigo for c in session.query(Contentor).filter_by(status=StatusContentor.ALUGADO)
         }
     assert alugados == {str(n) for n in range(1, 19)}
-    lista_alugados = g.t("alugados")
+    lista_alugados = g.comando("alugados")
     assert all(f"{p.nome} - vencimento" in lista_alugados for p in CONTENTORES)
 
     # 3. Recolha e partida.
@@ -381,7 +459,7 @@ def test_operacao_completa_de_22_pedidos_pelo_whatsapp(
         carga_c08 = next(item.id for item in itens if item.pedido.nome_cliente == "Obra C08")
 
     # 7. Painel do gestor: financeiro e pendências.
-    painel = g.t("5")
+    painel = g.comando("5")
     caixa = sum(p.valor for p in pedidos if p.fica_pago)
     receber = sum(p.valor for p in pedidos if not p.fica_pago)
     assert f"Total faturado — caixa: {euros(caixa)}" in painel
@@ -396,19 +474,19 @@ def test_operacao_completa_de_22_pedidos_pelo_whatsapp(
     cargas_painel = painel.split("Cargas com Divergência no Despejo")[1]
     for nome in ("Obra C04", "Obra C08", "Obra K05"):
         assert nome in cargas_painel
-    painel_motorista = m.t("5")
+    painel_motorista = m.comando("5")
     assert "Cargas com Divergência" not in painel_motorista
     assert "RESUMO FINANCEIRO" not in painel_motorista
 
     # 8. Gestor resolve avarias (frota volta a disponível) e uma carga.
     for nome, item_id in avarias.items():
-        revisao = g.t(f"resolver avaria {item_id}")
+        revisao = g.comando(f"resolver avaria {item_id}")
         assert "Revisão de resolução de avaria" in revisao and nome in revisao
         if nome == "Obra K04":
             assert "Equipamento Nº 5 (carrinha)" in revisao
-        assert "resolvida" in g.t("1"), nome
-    assert "resolvida" in g.t(f"resolver carga {carga_c08}")
-    assert "cadastrado na frota" in g.t("cadastrar contentor 25")
+        assert "resolvida" in g.tocar("Confirmar resolução"), nome
+    assert "resolvida" in g.comando(f"resolver carga {carga_c08}")
+    assert "cadastrado na frota" in g.comando("cadastrar contentor 25")
     with system_db() as session:
         assert {c.status for c in session.query(Contentor).all()} == {StatusContentor.DISPONIVEL}
         pendentes_carga = session.query(PedidoContentor).filter_by(
@@ -418,10 +496,10 @@ def test_operacao_completa_de_22_pedidos_pelo_whatsapp(
         fotos = dict(
             session.query(ContentorFoto.tipo_foto, func.count()).group_by(ContentorFoto.tipo_foto).all()
         )
-    # 18 contentores + 3 fotos extra (Obra C06) + 12 carrinhas; 1 foto por
+    # 18 contentores + 3 fotos extra (Obra C06) + 15 carrinhas; 1 foto por
     # equipamento na recolha/partida e no despejo.
-    assert fotos == {"ENTREGA": 33, "RECOLHA": 30, "DESPEJO": 30}
-    assert "Cargas com Divergência" in g.t("5")
+    assert fotos == {"ENTREGA": 36, "RECOLHA": 33, "DESPEJO": 33}
+    assert "Cargas com Divergência" in g.comando("5")
 
     # 9. Infraestrutura do webhook: tudo processado, fila vazia, nada saiu para a Meta.
     db_assertions.assert_all_dedup_completed()
@@ -429,3 +507,5 @@ def test_operacao_completa_de_22_pedidos_pelo_whatsapp(
     db_assertions.assert_quick_check_ok()
     assert fake_meta.external_attempts == []
     assert len(fake_meta.sent) > 900
+    # A operação é feita sobretudo por toques.
+    assert g.toques + m.toques > 500
