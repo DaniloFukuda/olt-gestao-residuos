@@ -47,9 +47,13 @@ suíte completa verde (1621 testes) e teste de ponta a ponta com 22 pedidos.
    17 01 07 (misturas de betão, tijolos, ladrilhos) e 17 09 04 (mistura de
    RCD). Confirmar com a empresa se isto é feito fora do sistema ou se o
    sistema deve guardar o código LER e o número da e-GAR por despejo.
-4. **Menu "Corrigir" com 11–12 campos** (pedido pago, carrinha) vai como texto
-   numerado, porque a lista do WhatsApp aceita no máximo 10 linhas. Aceitável,
-   ou agrupar campos (ex.: "Pagamento") para voltar a caber numa lista?
+4. **Menu principal em texto:** por decisão do Danilo (julho/2026) o menu
+   1–5 é texto numerado; tudo o resto virou botões/listas em 03/10/2026. Se a
+   equipa preferir, basta tirar `_is_main_menu` de `send_whatsapp_message`
+   para o menu virar lista (2 toques em vez de 1 algarismo).
+5. **Horários da carrinha:** a lista oferece 08:00–16:00 de hora em hora
+   (`HORARIOS` em `app/agents/pedido_v24/opcoes.py`); ajustar se o horário de
+   trabalho mudar.
 
 ## 4. Dívida técnica
 
