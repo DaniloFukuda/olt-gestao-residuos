@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
+from app.agents.pedido_v24 import opcoes
 from app.agents.pedido_v24.transitions import AdvanceTransition, IdleTransition
 from app.core.money import VALOR_INVALIDO_MESSAGE, parse_valor_monetario
 from app.integrations.whatsapp.parser import NormalizedWhatsAppMessage
@@ -258,7 +259,7 @@ class ContentorCadastroAgent:
             return AdvanceTransition(
                 "v24_cadastro_data_manual",
                 dict(context or {}),
-                "Informe a data no formato DD/MM/AAAA.",
+                opcoes.data_lista_prompt(now.date(), "entrega"),
             )
         else:
             return "Selecione Hoje, Amanhã ou Outra data."
@@ -583,7 +584,7 @@ class ContentorCadastroAgent:
         return AdvanceTransition(
             "v24_cadastro_quantidade",
             context,
-            "🔢 Quantos contentores são necessários para este pedido?",
+            opcoes.quantidade_prompt(carrinha=False),
         )
 
     @staticmethod

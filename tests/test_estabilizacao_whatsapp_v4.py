@@ -142,9 +142,11 @@ def test_correcao_carrinha_status_pagamento_por_numero_textual(db_session, pago)
 @pytest.mark.parametrize(
     ("tipo", "pago", "expected_count", "unexpected_field"),
     [
-        (TipoEquipamentoPedido.CARRINHA.value, True, 12, None),
-        (TipoEquipamentoPedido.CARRINHA.value, False, 11, "forma_pagamento"),
-        (TipoEquipamentoPedido.CONTENTOR.value, True, 11, None),
+        # Sempre 10 linhas (limite da lista do WhatsApp): "Pagamento" cobre
+        # status e forma; na carrinha, dia e hora da chegada vão juntos.
+        (TipoEquipamentoPedido.CARRINHA.value, True, 10, "forma_pagamento"),
+        (TipoEquipamentoPedido.CARRINHA.value, False, 10, "forma_pagamento"),
+        (TipoEquipamentoPedido.CONTENTOR.value, True, 10, "forma_pagamento"),
         (TipoEquipamentoPedido.CONTENTOR.value, False, 10, "forma_pagamento"),
     ],
 )
@@ -258,9 +260,9 @@ def test_correcao_todas_opcoes_entram_no_estado_correto_por_numero_e_id(db_sessi
         _assert_context_preserved(interactive_ctx_before, interactive.contexto_json)
 
 
-def test_correcao_com_12_opcoes_vai_como_texto_e_permite_responder_9(db_session, monkeypatch):
-    # A lista interativa da Meta aceita no máximo 10 linhas; com 12 campos o
-    # envio como lista era sempre recusado e só então caía para texto.
+def test_correcao_da_carrinha_paga_cabe_numa_lista_e_permite_responder_8(db_session, monkeypatch):
+    # A lista interativa da Meta aceita no máximo 10 linhas. Antes a carrinha
+    # paga tinha 12 campos e o menu ia como texto; agora vai numa lista só.
     monkeypatch.setenv("ENV", "development")
     monkeypatch.setenv("WHATSAPP_ACCESS_TOKEN", "fake-token")
     monkeypatch.setenv("WHATSAPP_PHONE_NUMBER_ID", "100000000000002")
@@ -270,9 +272,7 @@ def test_correcao_com_12_opcoes_vai_como_texto_e_permite_responder_9(db_session,
 
     def fake_post(url, headers, json, timeout):
         calls.append(json)
-        if json["type"] == "interactive":
-            return httpx.Response(400, json={"error": {"message": "list failed"}})
-        return httpx.Response(200, json={"messages": [{"id": "wamid.text"}]})
+        return httpx.Response(200, json={"messages": [{"id": "wamid.list"}]})
 
     monkeypatch.setattr(httpx, "post", fake_post)
     conversa = _conversa_correcao(
@@ -286,14 +286,15 @@ def test_correcao_com_12_opcoes_vai_como_texto_e_permite_responder_9(db_session,
     result = send_whatsapp_message(conversa.telefone, menu)
 
     assert len(calls) == 1
-    assert calls[0]["type"] == "text"
-    assert "fallback_from" not in result
-    assert "9. Status do pagamento" in calls[0]["text"]["body"]
-    assert "12. ponto de referencia" in agent._norm(calls[0]["text"]["body"])
+    assert calls[0]["interactive"]["type"] == "list"
+    rows = calls[0]["interactive"]["action"]["sections"][0]["rows"]
+    assert len(rows) == 10
+    assert rows[7]["id"] == "corrigir_pedido:status_pagamento"
+    assert result["status"] == "sent"
     db_session.refresh(conversa)
     assert conversa.estado_atual == "v24_cadastro_corrigir"
 
-    response = agent.handle(conversa, _msg("9"))
+    response = agent.handle(conversa, _msg("8"))
     db_session.refresh(conversa)
 
     assert conversa.estado_atual == "v24_cadastro_edicao_opcao"
@@ -796,6 +797,6 @@ def test_pedido_legado_com_campos_nulos_nao_quebra_listagens_e_correcao(db_sessi
     ctx["referencia"] = None
     prompt = agent._corrigir_prompt(ctx)
 
-    assert "Status do pagamento" in prompt
+    assert "8. Pagamento" in prompt
     assert "Forma de pagamento" not in prompt
     assert "ponto de referencia" in agent._norm(prompt)

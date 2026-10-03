@@ -208,7 +208,7 @@ class ContentorOperationalAgent:
                 "v24_entrega_adesivo",
                 ctx,
                 f"{progresso}\n\nVamos registrar o próximo.\n\n"
-                "Digite o número do contentor que está a descarregar agora:",
+                "Qual o número do contentor que está a descarregar agora?",
             )
         return AdvanceTransition(
             "v24_entrega_gps",
@@ -300,7 +300,7 @@ class ContentorOperationalAgent:
             char for char in normalized if not unicodedata.combining(char)
         ).strip().lower()
         ctx = dict(conversa.contexto_json or {})
-        if choice in {"2", "nao", "nao, continua pendente", "🕒 nao, continua pendente"}:
+        if choice in {"2", "nao", "nao, continua pendente", "🕒 nao, continua pendente", "nao, pendente", "🕒 nao, pendente"}:
             return IdleTransition(
                 "✅ Entrega confirmada com sucesso para todos os ativos processados. Pagamento permanece pendente."
             )
@@ -521,7 +521,7 @@ class ContentorOperationalAgent:
                 "v24_recolha_avaria",
                 ctx,
                 "O equipamento sofreu algum estrago ou avaria na obra?\n\n"
-                "1. ✅ Não, está perfeito\n2. 💥 Sim, está estragado",
+                "1. ✅ Sem avaria\n2. 💥 Com avaria",
             )
         return "Selecione Outra Foto ou Próximo Passo."
 
@@ -535,11 +535,11 @@ class ContentorOperationalAgent:
         choice = "".join(
             char for char in normalized if not unicodedata.combining(char)
         ).strip().lower()
-        if choice in {"1", "nao, esta perfeito", "✅ nao, esta perfeito"}:
+        if choice in {"1", "nao, esta perfeito", "✅ nao, esta perfeito", "sem avaria", "✅ sem avaria"}:
             ctx["avariado"] = False
             ctx["relato_avaria"] = None
             return PrepararConfirmacaoRecolhaContentor(ctx)
-        if choice in {"2", "sim, esta estragado", "💥 sim, esta estragado"}:
+        if choice in {"2", "sim, esta estragado", "💥 sim, esta estragado", "com avaria", "💥 com avaria"}:
             ctx["avariado"] = True
             return AdvanceTransition(
                 "v24_recolha_relato",

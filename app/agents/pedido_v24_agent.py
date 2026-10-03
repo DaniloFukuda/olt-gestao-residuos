@@ -7,7 +7,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from sqlalchemy.orm import Session
 
-from app.agents.pedido_v24 import despejo
+from app.agents.pedido_v24 import despejo, opcoes
 from app.agents.pedido_v24.transitions import AdvanceTransition
 from app.agents.pedido_v24.contentor_cadastro import (
     CadastroModality,
@@ -256,8 +256,9 @@ class PedidoV24Agent:
             elif choice in {"2", "amanha"}:
                 planned = now + timedelta(days=1)
             elif choice in {"3", "outra data"}:
+                evento = "chegada" if ctx.get("tipo_solicitacao") == TipoEquipamentoPedido.CARRINHA.value else "entrega"
                 return self._advance(
-                    conversa, "v24_cadastro_data_manual", ctx, "Informe a data no formato DD/MM/AAAA."
+                    conversa, "v24_cadastro_data_manual", ctx, opcoes.data_lista_prompt(now.date(), evento)
                 )
             else:
                 return "Selecione Hoje, Amanhã ou Outra data."
@@ -514,7 +515,7 @@ class PedidoV24Agent:
                 return self._idle(conversa, "Esse ativo já não está pendente. Reinicie a entrega.")
             is_carrinha = contentor.tipo_equipamento == TipoEquipamentoPedido.CARRINHA.value
             if is_carrinha and not re.fullmatch(r"\d{1,6}", number):
-                return "Informe o número da frota da carrinha ou 0 se não houver."
+                return "Informe o número da frota da carrinha ou toque em Sem frota."
             if not is_carrinha and (not re.fullmatch(r"\d{1,6}", number) or number == "0"):
                 return "Informe somente o número visível no contentor."
             if number != "0" and number in [str(item.get("numero_adesivo")) for item in ctx.get("entregas") or []]:
@@ -612,7 +613,7 @@ class PedidoV24Agent:
                 return self._idle(conversa, "Entrega cancelada. Nenhum ativo foi marcado como entregue.")
             return "Escolha Confirmar entrega ou Cancelar."
         if state == "v24_entrega_pagou":
-            if choice in {"2", "nao", "nao, continua pendente", "🕒 nao, continua pendente"}:
+            if choice in {"2", "nao", "nao, continua pendente", "🕒 nao, continua pendente", "nao, pendente", "🕒 nao, pendente"}:
                 return self._idle(conversa, "✅ Entrega confirmada com sucesso para todos os ativos processados. Pagamento permanece pendente.")
             if choice in {"1", "sim", "sim, foi pago", "✅ sim, foi pago"}:
                 return self._advance(
@@ -719,17 +720,17 @@ class PedidoV24Agent:
                     return self._advance(conversa, "v24_recolha_confirmacao", ctx, self._recolha_confirmacao_prompt(ctx))
                 return self._advance(
                     conversa, "v24_recolha_avaria", ctx,
-                    "O equipamento sofreu algum estrago ou avaria na obra?\n\n1. ✅ Não, está perfeito\n2. 💥 Sim, está estragado",
+                    "O equipamento sofreu algum estrago ou avaria na obra?\n\n1. ✅ Sem avaria\n2. 💥 Com avaria",
                 )
             return "Selecione Outra Foto ou Próximo Passo."
         if state == "v24_recolha_avaria":
             if not get_settings().feature_avarias_enabled:
                 return self._recover_disabled_avaria(conversa, ctx)
-            if choice in {"1", "nao, esta perfeito", "✅ nao, esta perfeito"}:
+            if choice in {"1", "nao, esta perfeito", "✅ nao, esta perfeito", "sem avaria", "✅ sem avaria"}:
                 ctx["avariado"] = False
                 ctx["relato_avaria"] = None
                 return self._advance(conversa, "v24_recolha_confirmacao", ctx, self._recolha_confirmacao_prompt(ctx))
-            if choice in {"2", "sim, esta estragado", "💥 sim, esta estragado"}:
+            if choice in {"2", "sim, esta estragado", "💥 sim, esta estragado", "com avaria", "💥 com avaria"}:
                 return self._advance(conversa, "v24_recolha_relato", ctx, "Descreva a avaria com pelo menos 10 caracteres.")
             return "Selecione uma das opções de avaria."
         if state == "v24_recolha_relato":
@@ -1824,7 +1825,7 @@ class PedidoV24Agent:
             and item.status_entrega == "PENDENTE"
         )
         prompt = (
-            "Digite o número do contentor que está a descarregar agora:"
+            "Qual o número do contentor que está a descarregar agora?"
             if pendentes
             else ""
         )
@@ -1834,6 +1835,25 @@ class PedidoV24Agent:
             "contentor_ids": pendentes,
             "prompt": prompt,
         }
+
+    def numeros_frota_para_entrega(self, context) -> list[str]:
+        """Contentores disponíveis para o equipamento atual da entrega.
+
+        Vazio quando o equipamento atual não é contentor, quando a frota
+        não está cadastrada ou quando não há disponíveis.
+        """
+        ids = context.get("contentores") or []
+        indice = context.get("indice")
+        if not isinstance(indice, int) or not 0 <= indice < len(ids):
+            return []
+        item = self.db.get(PedidoContentor, ids[indice])
+        if not item or item.tipo_equipamento != TipoEquipamentoPedido.CONTENTOR.value:
+            return []
+        ja_informados = {str(entrega.get("numero_adesivo")) for entrega in context.get("entregas") or []}
+        return [
+            numero for numero in self.service.numeros_frota_disponiveis()
+            if numero not in ja_informados
+        ]
 
     def resolve_entrega_contentor_adesivo(self, message, context):
         """Fornece ao agente um snapshot simples das leituras do adesivo."""
@@ -1882,7 +1902,7 @@ class PedidoV24Agent:
             "pedido_exists": True,
             "carrinha_ids": pendentes,
             "prompt": (
-                "Confirme o número da frota da carrinha alocada (ou digite 0 se não houver):"
+                "Digite o número da frota da carrinha alocada ou toque em Sem frota:"
                 if pendentes else ""
             ),
         }
@@ -1991,7 +2011,7 @@ class PedidoV24Agent:
                 response = (
                     "O cliente realizou o pagamento no local?\n\n"
                     "1. ✅ Sim, foi pago\n"
-                    "2. 🕒 Não, continua pendente"
+                    "2. 🕒 Não, pendente"
                 )
             else:
                 self._aplicar_idle(conversa)
@@ -2189,27 +2209,22 @@ class PedidoV24Agent:
         return "\n".join(linhas)
 
     def _corrigir_fields(self, ctx):
+        # A lista do WhatsApp aceita no máximo 10 linhas. Por isso "Pagamento"
+        # cobre status e forma (Sim → pergunta a forma) e, na carrinha, o dia
+        # e a hora da chegada são corrigidos juntos (dia → hora).
         is_carrinha = ctx.get("tipo_solicitacao") == TipoEquipamentoPedido.CARRINHA.value
-        fields = [
+        return [
             ("quantidade", "Quantidade de carrinhas" if is_carrinha else "Quantidade de contentores"),
             ("nome_cliente", "Nome do cliente"),
             ("telefone", "Telefone"),
-            ("data_entrega", "Dia da chegada" if is_carrinha else "Dia da entrega"),
+            ("data_entrega", "Dia e hora da chegada" if is_carrinha else "Dia da entrega"),
+            ("tipo_residuo", "Tipo de resíduo"),
+            ("mao_de_obra", "Pessoal para carregamento"),
+            ("valor_total", "Valor total"),
+            ("status_pagamento", "Pagamento"),
+            ("endereco", "Endereço"),
+            ("ponto_referencia", "Ponto de referência"),
         ]
-        if is_carrinha:
-            fields.append(("hora_entrega", "Hora da chegada"))
-        fields.extend(
-            [
-                ("tipo_residuo", "Tipo de resíduo"),
-                ("mao_de_obra", "Pessoal para carregamento"),
-                ("valor_total", "Valor total"),
-                ("status_pagamento", "Status do pagamento"),
-            ]
-        )
-        if ctx.get("pago"):
-            fields.append(("forma_pagamento", "Forma de pagamento"))
-        fields.extend([("endereco", "Endereço"), ("ponto_referencia", "Ponto de referência")])
-        return fields
 
     def _parse_corrigir_field(self, choice, ctx=None):
         if choice.startswith("corrigir_pedido:"):
@@ -2231,6 +2246,8 @@ class PedidoV24Agent:
             "pessoal para carregamento": "mao_de_obra",
             "valor total": "valor_total",
             "status do pagamento": "status_pagamento",
+            "pagamento": "status_pagamento",
+            "dia e hora da chegada": "data_entrega",
             "forma de pagamento": "forma_pagamento",
             "endereco": "endereco",
             "ponto de referencia": "ponto_referencia",
@@ -2252,10 +2269,9 @@ class PedidoV24Agent:
             "quantidade": self._quantidade_prompt(ctx),
             "nome_cliente": "Qual é o nome do cliente?",
             "telefone": "Qual é o telefone do cliente?",
-            "data_entrega": (
-                "Quando está planejada a chegada?\n\n1. Hoje\n2. Amanhã\nou envie DD/MM/AAAA"
-                if ctx.get("tipo_solicitacao") == TipoEquipamentoPedido.CARRINHA.value
-                else self._data_prompt().replace("3. Outra data", "ou envie DD/MM/AAAA")
+            "data_entrega": opcoes.data_edicao_prompt(
+                datetime.now(self._lisbon_timezone()).date(),
+                "chegada" if ctx.get("tipo_solicitacao") == TipoEquipamentoPedido.CARRINHA.value else "entrega",
             ),
             "hora_entrega": self._horario_carrinha_prompt(),
             "tipo_residuo": self._residuo_prompt({"residuos": [], "quantidade": 1, "tipo_solicitacao": ctx.get("tipo_solicitacao")}),
@@ -2290,6 +2306,9 @@ class PedidoV24Agent:
             ctx["telefone"] = phone
         elif field == "data_entrega":
             ctx["data"] = value
+            if ctx.get("tipo_solicitacao") == TipoEquipamentoPedido.CARRINHA.value:
+                ctx["editing_field"] = "hora_entrega"
+                return self._advance(conversa, "v24_cadastro_horario_carrinha", ctx, self._horario_carrinha_prompt())
         elif field == "hora_entrega":
             if not self._horario_valido(value):
                 return "Horário inválido. Envie no formato HH:MM, por exemplo 14:00 ou 09:30."
@@ -2499,8 +2518,8 @@ class PedidoV24Agent:
     def _entrega_numero_prompt(self, ctx):
         contentor = self.db.get(PedidoContentor, ctx["contentores"][ctx["indice"]])
         if contentor and contentor.tipo_equipamento == TipoEquipamentoPedido.CARRINHA.value:
-            return "Confirme o número da frota da carrinha alocada (ou digite 0 se não houver):"
-        return "Digite o número do contentor que está a descarregar agora:"
+            return "Digite o número da frota da carrinha alocada ou toque em Sem frota:"
+        return "Qual o número do contentor que está a descarregar agora?"
 
     def _contexto_entrega_tem_tipo(self, ctx, tipo_equipamento: str) -> bool:
         item_ids = list(ctx.get("contentores") or [])
@@ -2569,18 +2588,18 @@ class PedidoV24Agent:
         )
 
     def _tipo_solicitacao_prompt(self):
-        return "🚛 Qual é o tipo de solicitação?\n\n1️⃣ Contentor\n2️⃣ Carrinha"
+        return "🚛 Qual é o tipo de solicitação?\n\n1. 📦 Contentor\n2. 🚛 Carrinha"
 
     def _horario_carrinha_prompt(self):
-        return "Qual o horário agendado da carrinha? Envie no formato HH:MM. Ex: 14:00"
+        return opcoes.horario_prompt()
 
     def _data_prompt(self):
         return "Quando está planejada a entrega?\n\n1. Hoje\n2. Amanhã\n3. Outra data"
 
     def _quantidade_prompt(self, ctx):
-        if ctx.get("tipo_solicitacao") == TipoEquipamentoPedido.CARRINHA.value:
-            return "🔢 Quantas carrinhas são necessárias para este pedido?"
-        return "🔢 Quantos contentores são necessários para este pedido?"
+        return opcoes.quantidade_prompt(
+            ctx.get("tipo_solicitacao") == TipoEquipamentoPedido.CARRINHA.value
+        )
 
     def _mao_obra_prompt(self):
         return (

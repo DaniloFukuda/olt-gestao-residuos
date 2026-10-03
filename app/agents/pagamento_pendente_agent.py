@@ -90,14 +90,18 @@ class PagamentoPendenteAgent:
 
         if conversa.estado_atual == self.CONFIRMACAO:
             normalized = text.lower()
-            if normalized in {"2", "trocar", "trocar forma", "alterar forma"}:
+            if normalized in {"2", "trocar", "trocar forma", "alterar forma", "🔁 trocar forma"}:
                 context.pop("forma_pagamento", None)
                 conversa.estado_atual = self.FORMA
                 conversa.contexto_json = context
                 self.db.commit()
                 return "Escolha a nova forma:\n1. Dinheiro\n2. MBWay\n3. Transferência\n4. Multibanco"
-            if normalized not in {"1", "confirmar", "confirmo", "sim"}:
-                return "Confirmação inválida. Envie 1 para confirmar, 2 para trocar a forma ou cancelar."
+            if normalized in {"3", "❌ cancelar"}:
+                self._clear(conversa)
+                self.db.commit()
+                return "Registo do pagamento cancelado. Nenhuma alteração foi salva."
+            if normalized not in {"1", "confirmar", "confirmo", "sim", "✅ confirmar"}:
+                return "Confirmação inválida. Escolha Confirmar, Trocar forma ou Cancelar."
 
             forma = context.get("forma_pagamento")
             self._clear(conversa)
@@ -170,9 +174,9 @@ class PagamentoPendenteAgent:
                 self._revisao(pedido),
                 f"Forma selecionada: {forma}",
                 "",
-                "1. Confirmar pagamento integral",
-                "2. Trocar forma de pagamento",
-                "0. Cancelar",
+                "1. ✅ Confirmar",
+                "2. 🔁 Trocar forma",
+                "3. ❌ Cancelar",
             ]
         )
 

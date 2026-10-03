@@ -1011,7 +1011,8 @@ def test_cadastro_v24_carrinha_valida_horario_e_mao_de_obra(db_session, monkeypa
 
     for text in ["novo pedido", "carrinha", "1", "Cliente Carrinha", "351912345678", "Hoje"]:
         response = router.handle(msg(text))
-    assert "HH:MM" in response
+    # Horário em lista (08:00-16:00 + "✏️ Outro horário"); digitar HH:MM continua aceito.
+    assert "1. 08:00" in response and "10. ✏️ Outro horário" in response
     invalid = router.handle(msg("99:99"))
     assert "Horário inválido" in invalid
     residuo_prompt = router.handle(msg("09:30"))
@@ -1047,7 +1048,7 @@ def test_cadastro_v24_carrinha_ordem_quantidade_cliente_data_hora_residuo(db_ses
     assert "nome do cliente" in router.handle(msg("2")).lower()
     assert "telefone do cliente" in router.handle(msg("Cliente Ordem")).lower()
     assert "planejada a chegada" in router.handle(msg("351912345678")).lower()
-    assert "HH:MM" in router.handle(msg("Hoje"))
+    assert "Outro horário" in router.handle(msg("Hoje"))
     assert "Resíduo da carrinha 1/2" in router.handle(msg("08:45"))
 
     conversa = db_session.query(ConversaWhatsApp).one()
@@ -1055,7 +1056,7 @@ def test_cadastro_v24_carrinha_ordem_quantidade_cliente_data_hora_residuo(db_ses
     assert conversa.contexto_json["nome"] == "Cliente Ordem"
 
 
-def test_cadastro_v24_corrigir_com_mais_de_10_campos_vai_como_texto_e_edita_quantidade(db_session, monkeypatch):
+def test_cadastro_v24_corrigir_cabe_numa_lista_e_edita_quantidade(db_session, monkeypatch):
     liberar_operadores(monkeypatch)
     router = WhatsappRouterAgent(db_session)
     steps = [
@@ -1069,11 +1070,12 @@ def test_cadastro_v24_corrigir_com_mais_de_10_campos_vai_como_texto_e_edita_quan
 
     corrigir = router.handle(msg("Corrigir"))
     result = send_whatsapp_message("351900009900", corrigir, force_mock=True)
-    # Carrinha paga tem 12 campos; a lista da Meta aceita no máximo 10 linhas,
-    # por isso o menu vai como texto numerado.
-    assert "interactive_type" not in result
-    assert "1. Quantidade de carrinhas" in result["body"]
-    assert "5. Hora da chegada" in result["body"]
+    # A lista da Meta aceita no máximo 10 linhas: "Pagamento" e "Dia e hora
+    # da chegada" agrupam campos para o menu caber numa lista só.
+    assert result["interactive_type"] == "list"
+    assert len(result["list_rows"]) == 10
+    assert result["list_rows"][0]["id"] == "corrigir_pedido:quantidade"
+    assert result["list_rows"][3]["title"] == "Dia e hora da chegada"
 
     prompt = router.handle(msg("1"))
     assert "carrinhas" in prompt.lower()
@@ -1318,7 +1320,7 @@ def test_entrega_v24_selecao_de_pedido_usa_lista_com_cliente_inteiro(db_session,
     assert "número do contentor" in prompt
 
 
-def test_entrega_v24_nome_longo_usa_fallback_seguro_sem_id_interno(db_session, monkeypatch):
+def test_entrega_v24_nome_longo_vai_na_descricao_da_lista(db_session, monkeypatch):
     liberar_operadores(monkeypatch)
     nome_cliente = "Cliente Empresarial Nome Muito Longo Para Entrega"
     pedido = PedidoService(db_session).criar(
@@ -1338,9 +1340,12 @@ def test_entrega_v24_nome_longo_usa_fallback_seguro_sem_id_interno(db_session, m
     body = router.handle(msg("2"))
     sent = send_whatsapp_message("351900009900", body, force_mock=True)
 
-    assert "list_rows" not in sent
-    assert nome_cliente in sent["body"]
-    assert "Quantidade: 2 equipamentos" in sent["body"]
+    # Título da linha cortado em 24 caracteres; o nome inteiro vai na descrição.
+    linha = sent["list_rows"][0]
+    assert linha["id"] == f"entrega_pedido:{pedido.id}"
+    assert linha["title"] == "Cliente Empresarial N..."
+    assert linha["description"].startswith(nome_cliente)
+    assert linha["description"].endswith("• 2 equipamentos")
     assert "entrega_pedido" not in sent["body"]
     assert f"ID: {pedido.id}" not in sent["body"]
     assert "Contentor x2" not in sent["body"]

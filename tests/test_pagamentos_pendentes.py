@@ -94,7 +94,8 @@ def iniciar_ate_confirmacao(router, pedido_id, forma="2"):
     revisao = router.handle(msg(str(pedido_id)))
     assert "Revisão do recebimento" in revisao
     confirmacao = router.handle(msg(forma))
-    assert "Confirmar pagamento integral" in confirmacao
+    # Opções tocáveis: 1. ✅ Confirmar / 2. 🔁 Trocar forma / 3. ❌ Cancelar
+    assert "1. ✅ Confirmar" in confirmacao
     return confirmacao
 
 
@@ -168,7 +169,10 @@ def test_forma_invalida_cancelar_voltar_e_menu_nao_mutam(db_session, operadores)
         router.handle(msg("pagamentos pendentes"))
         router.handle(msg(str(pedido.id)))
         assert "inválida" in router.handle(msg("Criptomoeda"))
-        router.handle(msg(comando))
+        resposta = router.handle(msg(comando))
+        if "Deseja cancelar" in resposta:
+            # Cancelar no meio da operação pede confirmação.
+            router.handle(msg("1"))
         db_session.refresh(pedido)
         assert pedido.status_pagamento == StatusPagamento.PENDENTE.value
         assert pedido.forma_pagamento is None
@@ -458,3 +462,16 @@ def test_forma_nula_e_pedido_removido_antes_da_confirmacao_sao_seguros(
     db_session.delete(pedido)
     db_session.commit()
     assert "Nenhuma alteração adicional" in router.handle(msg("1"))
+
+
+def test_cancelar_na_confirmacao_do_pagamento_nao_muta(db_session, operadores):
+    pedido = criar_pedido(db_session)
+    router = WhatsappRouterAgent(db_session)
+    iniciar_ate_confirmacao(router, pedido.id, "1")
+
+    resposta = router.handle(msg("3"))
+
+    db_session.refresh(pedido)
+    assert "cancelado" in resposta
+    assert pedido.status_pagamento == StatusPagamento.PENDENTE.value
+    assert db_session.query(ConversaWhatsApp).filter_by(telefone=GESTOR).one().estado_atual == "idle"

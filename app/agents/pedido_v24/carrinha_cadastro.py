@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 from enum import Enum
 from typing import Any
 
+from app.agents.pedido_v24 import opcoes
 from app.agents.pedido_v24.transitions import AdvanceTransition, IdleTransition
 from app.core.money import VALOR_INVALIDO_MESSAGE, parse_valor_monetario
 from app.models.pedido import TipoEquipamentoPedido
@@ -102,7 +103,9 @@ class CarrinhaCadastroAgent:
         elif choice in {"2", "amanha"}:
             planned = now + timedelta(days=1)
         elif choice in {"3", "outra data"}:
-            return AdvanceTransition("v24_cadastro_data_manual", dict(context or {}), "Informe a data no formato DD/MM/AAAA.")
+            return AdvanceTransition(
+                "v24_cadastro_data_manual", dict(context or {}), opcoes.data_lista_prompt(now.date(), "chegada")
+            )
         else:
             return "Selecione Hoje, Amanhã ou Outra data."
         ctx = dict(context or {})
@@ -266,6 +269,9 @@ class CarrinhaCadastroAgent:
                 try: value = datetime.strptime(raw, "%d/%m/%Y").replace(tzinfo=now.tzinfo)
                 except ValueError: return "Data inválida. Use Hoje, Amanhã ou DD/MM/AAAA."
             ctx["data"] = value.isoformat()
+            # "Dia e hora da chegada" é uma linha só no menu Corrigir: depois do dia, a hora.
+            ctx["editing_field"] = "hora_entrega"
+            return AdvanceTransition("v24_cadastro_horario_carrinha", ctx, self._horario_prompt())
         elif field == "hora_entrega":
             if not self._horario_valido(raw): return "Horário inválido. Envie no formato HH:MM, por exemplo 14:00 ou 09:30."
             ctx["horario_agendado"] = raw
@@ -347,11 +353,11 @@ class CarrinhaCadastroAgent:
     def _parse_forma(choice):
         return {"1":"MBWay","mbway":"MBWay","2":"Transferência","transferencia":"Transferência","3":"Dinheiro","dinheiro":"Dinheiro","4":"Outro","outro":"Outro"}.get(choice)
     @staticmethod
-    def _quantidade_prompt(): return "🔢 Quantas carrinhas são necessárias para este pedido?"
+    def _quantidade_prompt(): return opcoes.quantidade_prompt(carrinha=True)
     @staticmethod
     def _data_prompt(): return "Quando está planejada a chegada?\n\n1. Hoje\n2. Amanhã\n3. Outra data"
     @staticmethod
-    def _horario_prompt(): return "Qual o horário agendado da carrinha? Envie no formato HH:MM. Ex: 14:00"
+    def _horario_prompt(): return opcoes.horario_prompt()
     @staticmethod
     def _residuo_prompt(ctx):
         return f"Resíduo da carrinha {len(ctx.get('residuos') or []) + 1}/{ctx['quantidade']}:\n\n1. 🟢 Entulho Limpo\n2. 🟠 Entulho Misto"
