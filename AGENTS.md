@@ -24,7 +24,7 @@ Portugal, **100% conversacional pelo WhatsApp** (Cloud API da Meta).
 
 ```bash
 python -m pip install -r requirements.txt
-python -m pytest -q                 # ~1620 testes, ~2-3 min
+python -m pytest -q                 # ~1680 testes, ~3-4 min
 python -m pytest -q tests/system    # webhook de ponta a ponta
 ```
 
@@ -87,7 +87,10 @@ POST /webhook/whatsapp (app/routes/webhook.py)
    **Para uma pergunta nova virar botão/lista basta escrever as opções como
    linhas numeradas no fim do texto.** Respostas tocadas que os tratadores não
    entendem são traduzidas em `PedidoV24OperationalRouter._traduzir_opcao`
-   (ver `app/agents/pedido_v24/opcoes.py`).
+   (ver `app/agents/pedido_v24/opcoes.py`). Uma linha que termina em
+   ` — envie: comando` vira opção cujo id é o comando (ações rápidas do
+   painel). Títulos acima de 24 caracteres são divididos em " - "/" • "
+   (título + descrição); mantenha os títulos curtos.
 6. **Outbox** (`whatsapp_outbox_service.py`/`worker.py`) existe mas **não está
    ligada**: o webhook envia a resposta diretamente. Ver PENDENCIAS.
 7. **Frota:** tabela `contentores`, semeada com 1–20 no arranque
@@ -107,7 +110,8 @@ POST /webhook/whatsapp (app/routes/webhook.py)
 | Cancelar | `cancelar`/`sair`/`parar`/`voltar`/`0` no meio de uma operação pedem confirmação (1 Sim / 2 Não, continuar). | estado `confirmar_cancelamento` |
 | Dados públicos | Nada de telefones, IDs da Meta, tokens ou nomes reais no repositório. | scripts e testes |
 | Dashboard | `/dashboard/*` exige `X-Dashboard-Token` = `DASHBOARD_TOKEN`; sem token configurado, 404. | `app/routes/dashboard.py` |
-| Toques, não digitação (03/10/2026) | Toda pergunta com respostas padronizadas vira botões (prioridade) ou lista: tipo (Contentor/Carrinha), quantidade (1, 2, 3, "✏️ 4 ou mais"), dia (Hoje/Amanhã/Outra data → próximos 8 dias), horário da carrinha (08:00–16:00 + "✏️ Outro horário"), número do contentor (lista dos disponíveis na frota + "✏️ Outro número"), "Sem frota", avaria, pagamento, confirmações e "Corrigir" (10 linhas: "Pagamento" junta status e forma; na carrinha, dia e hora juntos). Digita-se só dado livre (nome, telefone, valor, endereço, relatos). O menu principal continua texto. | `pedido_v24/opcoes.py`, `client.py`, `router._traduzir_opcao` |
+| Toques, não digitação (03/10/2026) | Toda pergunta com respostas padronizadas vira botões (prioridade) ou lista: tipo (Contentor/Carrinha), quantidade (1, 2, 3, "✏️ 4 ou mais" — 4 opções não cabem em botões, que são no máximo 3), dia (Hoje/Amanhã/Outra data → próximos 8 dias), horário da carrinha (08:00–16:00 + "✏️ Outro horário"), número do contentor (lista dos disponíveis na frota + "✏️ Outro número"), "Sem frota", avaria, pagamento, confirmações e "Corrigir" (10 linhas: "Pagamento" junta status e forma; na carrinha, dia e hora juntos). Digita-se só dado livre (nome, telefone, valor, endereço, relatos). O menu principal continua texto. | `pedido_v24/opcoes.py`, `client.py`, `router._traduzir_opcao` |
+| Teste de UX (12/10/2026) | "Corrigir → Tipo de resíduo" pergunta equipamento a equipamento; aumentar a quantidade pergunta o resíduo dos novos. "Não, continuar" reenvia a última pergunta (`conversas_whatsapp.ultima_pergunta`). "Voltar" no despejo não pede a foto de novo. Painel do gestor com "⚡ Ações rápidas" (registrar pagamento, resolver avaria/carga). | `opcoes.residuo_edicao_prompt`, `_lembrar_pergunta`, `router._manter_fotos_do_despejo`, `_painel_v4_acoes_rapidas` |
 
 Antes destas: pagamento na entrega regista data e operador; divergências de
 carga e pagamentos pendentes só aparecem ao gestor no painel.
@@ -141,7 +145,10 @@ Pedido; expiração; financeiro; confirmação de cancelamento; "Próximo passo"
 nas fotos; limites da Cloud API; dados fictícios; token do dashboard; cargas
 no painel; teste de ponta a ponta. Depois do merge (PR #6/#7): o Danilo
 exigiu `WHATSAPP_APP_SECRET` em produção e criou o CI (`.github/workflows/
-pytest.yml`); em 03/10/2026 as perguntas passaram a botões e listas.
+pytest.yml`); em 03/10/2026 as perguntas passaram a botões e listas; em
+12/10/2026 um teste de UX "como humano" (tocando opção por opção, inclusive
+cada campo do Corrigir) corrigiu o resíduo por equipamento, a retomada após
+cancelar, o Voltar do despejo, títulos cortados e acentos.
 
 ## 6. Convenções
 

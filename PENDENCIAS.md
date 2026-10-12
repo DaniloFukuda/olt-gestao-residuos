@@ -54,6 +54,10 @@ suíte completa verde (1621 testes) e teste de ponta a ponta com 22 pedidos.
 5. **Horários da carrinha:** a lista oferece 08:00–16:00 de hora em hora
    (`HORARIOS` em `app/agents/pedido_v24/opcoes.py`); ajustar se o horário de
    trabalho mudar.
+6. **Links "💬 Resolver" do painel:** desde 12/10/2026 o painel do gestor tem
+   "⚡ Ações rápidas" tocáveis; os links `wa.me/?text=resolver ...` de cada
+   avaria/carga ficaram redundantes (e abrem a escolha de conversa). Manter
+   ou retirar?
 
 ## 4. Dívida técnica
 
