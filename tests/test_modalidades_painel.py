@@ -77,6 +77,7 @@ def preparar_blocos(router, monkeypatch):
     monkeypatch.setattr(router, "_avarias_ativas", lambda _pedidos: [SimpleNamespace()])
     monkeypatch.setattr(router, "_alugueres_avarias_ativas", lambda _alugueres: [])
     monkeypatch.setattr(router, "_format_avaria", lambda _item: "avaria-preservada")
+    monkeypatch.setattr(router, "_acao_rapida_avaria", lambda _item: "acao-avaria — envie: resolver avaria 1")
 
 
 def render_operacional(router):
@@ -182,7 +183,7 @@ def test_pagamentos_registro_e_avarias_permanecem_com_modalidade_off(
     monkeypatch.setattr(router.pedido_service, "pedidos_pagamento_pendente", lambda: [SimpleNamespace()])
     resposta = router._painel_v4(PerfilOperador.GESTOR)
     assert "pagamento-preservado" in resposta
-    assert "Registrar pagamento pendente" in resposta
+    assert "💶 Registrar pagamento — envie: registrar pagamento" in resposta
     assert "avaria-preservada" in resposta
     assert "financeiro-preservado" in resposta
 

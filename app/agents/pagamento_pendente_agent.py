@@ -37,14 +37,14 @@ class PagamentoPendenteAgent:
         self.db.commit()
         linhas = ["💶 Registrar pagamento pendente", "", "Selecione o pedido:"]
         for indice, pedido in enumerate(pedidos, 1):
-            tipo = self.service.tipo_equipamento_pagamento(pedido)
+            tipo = self._tipo_legivel(pedido)
             valor = self._money(pedido.valor_global)
             data = pedido.data_planejada.strftime("%d/%m/%Y")
             linhas.append(
                 f"{indice}. Pedido #{pedido.id} • {pedido.nome_cliente} • {tipo} • "
                 f"Total: {valor} • Pendente: {valor} • {data}"
             )
-        linhas.append("\nEnvie o número da lista. Use voltar, cancelar ou menu para sair.")
+        linhas.append("\nToque no pedido. Para sair, envie cancelar ou menu.")
         return "\n".join(linhas)
 
     def handle(
@@ -90,14 +90,18 @@ class PagamentoPendenteAgent:
 
         if conversa.estado_atual == self.CONFIRMACAO:
             normalized = text.lower()
-            if normalized in {"2", "trocar", "trocar forma", "alterar forma"}:
+            if normalized in {"2", "trocar", "trocar forma", "alterar forma", "🔁 trocar forma"}:
                 context.pop("forma_pagamento", None)
                 conversa.estado_atual = self.FORMA
                 conversa.contexto_json = context
                 self.db.commit()
                 return "Escolha a nova forma:\n1. Dinheiro\n2. MBWay\n3. Transferência\n4. Multibanco"
-            if normalized not in {"1", "confirmar", "confirmo", "sim"}:
-                return "Confirmação inválida. Envie 1 para confirmar, 2 para trocar a forma ou cancelar."
+            if normalized in {"3", "❌ cancelar"}:
+                self._clear(conversa)
+                self.db.commit()
+                return "Registo do pagamento cancelado. Nenhuma alteração foi salva."
+            if normalized not in {"1", "confirmar", "confirmo", "sim", "✅ confirmar"}:
+                return "Confirmação inválida. Escolha Confirmar, Trocar forma ou Cancelar."
 
             forma = context.get("forma_pagamento")
             self._clear(conversa)
@@ -148,6 +152,10 @@ class PagamentoPendenteAgent:
             return None
         return pedido
 
+    def _tipo_legivel(self, pedido: Pedido) -> str:
+        tipo = self.service.tipo_equipamento_pagamento(pedido)
+        return {"CONTENTOR": "📦 Contentor", "CARRINHA": "🚛 Carrinha", "MISTO": "📦🚛 Misto"}.get(tipo, tipo)
+
     def _revisao(self, pedido: Pedido) -> str:
         valor = self._money(pedido.valor_global)
         return "\n".join(
@@ -155,7 +163,7 @@ class PagamentoPendenteAgent:
                 "Revisão do recebimento",
                 f"Pedido: #{pedido.id}",
                 f"Cliente: {pedido.nome_cliente}",
-                f"Tipo: {self.service.tipo_equipamento_pagamento(pedido)}",
+                f"Tipo: {self._tipo_legivel(pedido)}",
                 f"Valor total: {valor}",
                 "Valor já pago: € 0,00",
                 f"Saldo pendente: {valor}",
@@ -170,9 +178,9 @@ class PagamentoPendenteAgent:
                 self._revisao(pedido),
                 f"Forma selecionada: {forma}",
                 "",
-                "1. Confirmar pagamento integral",
-                "2. Trocar forma de pagamento",
-                "0. Cancelar",
+                "1. ✅ Confirmar",
+                "2. 🔁 Trocar forma",
+                "3. ❌ Cancelar",
             ]
         )
 

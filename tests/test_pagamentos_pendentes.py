@@ -94,15 +94,16 @@ def iniciar_ate_confirmacao(router, pedido_id, forma="2"):
     revisao = router.handle(msg(str(pedido_id)))
     assert "Revisão do recebimento" in revisao
     confirmacao = router.handle(msg(forma))
-    assert "Confirmar pagamento integral" in confirmacao
+    # Opções tocáveis: 1. ✅ Confirmar / 2. 🔁 Trocar forma / 3. ❌ Cancelar
+    assert "1. ✅ Confirmar" in confirmacao
     return confirmacao
 
 
 def test_painel_exibe_acao_so_para_gestor_com_pendencia(db_session, operadores):
     criar_pedido(db_session)
     router = WhatsappRouterAgent(db_session)
-    assert "Registrar pagamento pendente" in router.handle(msg("5", GESTOR))
-    assert "Registrar pagamento pendente" not in router.handle(msg("5", FUNCIONARIO))
+    assert "Registrar pagamento — envie: registrar pagamento" in router.handle(msg("5", GESTOR))
+    assert "Registrar pagamento" not in router.handle(msg("5", FUNCIONARIO))
     assert MAIN_MENU.count("Painel de Controle Operacional") == 1
 
 
@@ -129,8 +130,8 @@ def test_lista_apenas_pendentes_positivos_sem_duplicar_e_classifica_tipos(db_ses
     pago = criar_pedido(db_session, nome="Já pago", pago=True)
     criar_pedido(db_session, nome="Sem saldo", valor="0")
     response = WhatsappRouterAgent(db_session).handle(msg("pagamentos pendentes"))
-    assert response.count(f"Pedido #{contentor.id}") == 1 and "Contentor • CONTENTOR" in response
-    assert response.count(f"Pedido #{carrinha.id}") == 1 and "Carrinha • CARRINHA" in response
+    assert response.count(f"Pedido #{contentor.id}") == 1 and "Contentor • 📦 Contentor" in response
+    assert response.count(f"Pedido #{carrinha.id}") == 1 and "Carrinha • 🚛 Carrinha" in response
     assert f"Pedido #{misto.id}" not in response and "Legado Misto" not in response
     assert f"Pedido #{pago.id}" not in response and "Sem saldo" not in response
 
@@ -139,7 +140,7 @@ def test_revisao_e_confirmacao_exibem_campos_obrigatorios(db_session, operadores
     pedido = criar_pedido(db_session, nome="Cliente Revisão")
     confirmacao = iniciar_ate_confirmacao(WhatsappRouterAgent(db_session), pedido.id)
     for trecho in (
-        f"Pedido: #{pedido.id}", "Cliente: Cliente Revisão", "Tipo: CARRINHA",
+        f"Pedido: #{pedido.id}", "Cliente: Cliente Revisão", "Tipo: 🚛 Carrinha",
         "Valor total: € 300,00", "Valor já pago: € 0,00", "Saldo pendente: € 300,00",
         "Status atual: PENDENTE", "Forma selecionada: MBWay", "saldo integral",
     ):
@@ -168,7 +169,10 @@ def test_forma_invalida_cancelar_voltar_e_menu_nao_mutam(db_session, operadores)
         router.handle(msg("pagamentos pendentes"))
         router.handle(msg(str(pedido.id)))
         assert "inválida" in router.handle(msg("Criptomoeda"))
-        router.handle(msg(comando))
+        resposta = router.handle(msg(comando))
+        if "Deseja cancelar" in resposta:
+            # Cancelar no meio da operação pede confirmação.
+            router.handle(msg("1"))
         db_session.refresh(pedido)
         assert pedido.status_pagamento == StatusPagamento.PENDENTE.value
         assert pedido.forma_pagamento is None
@@ -458,3 +462,16 @@ def test_forma_nula_e_pedido_removido_antes_da_confirmacao_sao_seguros(
     db_session.delete(pedido)
     db_session.commit()
     assert "Nenhuma alteração adicional" in router.handle(msg("1"))
+
+
+def test_cancelar_na_confirmacao_do_pagamento_nao_muta(db_session, operadores):
+    pedido = criar_pedido(db_session)
+    router = WhatsappRouterAgent(db_session)
+    iniciar_ate_confirmacao(router, pedido.id, "1")
+
+    resposta = router.handle(msg("3"))
+
+    db_session.refresh(pedido)
+    assert "cancelado" in resposta
+    assert pedido.status_pagamento == StatusPagamento.PENDENTE.value
+    assert db_session.query(ConversaWhatsApp).filter_by(telefone=GESTOR).one().estado_atual == "idle"

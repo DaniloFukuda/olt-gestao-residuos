@@ -534,7 +534,7 @@ def test_ciclo_true_consolidado_cria_exibe_revisa_resolve_e_audita(db_session):
     assert "Descreva a avaria" in agent.handle(conversa, message("2"))
     assert "Avaria: Sim" in agent.handle(conversa, message("porta lateral muito danificada"))
     final = agent.handle(conversa, message("1"))
-    assert "pendencia de avaria" in final
+    assert "pendência de avaria" in final
     db_session.refresh(contentor)
     assert contentor.status_resolucao_avaria == StatusResolucaoPedido.PENDENTE.value
 

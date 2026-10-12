@@ -13,16 +13,24 @@ logger = get_logger(__name__)
 
 # Limites da WhatsApp Cloud API: até 3 botões de resposta com título de até
 # 20 caracteres; lista com até 10 linhas no total (título até 24 caracteres,
-# descrição até 72). Mensagens fora destes limites são recusadas pela Meta.
+# descrição até 72); corpo de mensagem interativa com até 1024 caracteres.
+# Mensagens fora destes limites são recusadas pela Meta.
+#
+# Regra de UX (Paulo, 03/10/2026): o utilizador deve digitar o mínimo. Toda
+# pergunta com opções padronizadas vai como botões (até 3 opções curtas) ou
+# lista; acima de 10 opções, listas seguidas de 10 em 10. Só o menu principal
+# continua em texto (decisão mantida do Danilo).
 MAX_BUTTON_OPTIONS = 3
-MAX_LIST_OPTIONS = 5
+MAX_LIST_OPTIONS = 10
 MAX_CORRIGIR_LIST_OPTIONS = 10
 MAX_ENTREGA_LIST_OPTIONS = 10
 MAX_BUTTON_TITLE_CHARS = 20
 MAX_LIST_TITLE_CHARS = 24
 MAX_LIST_DESCRIPTION_CHARS = 72
+MAX_INTERACTIVE_BODY_CHARS = 1024
 LIST_BUTTON_TITLE = "Escolher opção"
 LIST_SECTION_TITLE = "Opções"
+CORPO_CURTO_OPCOES = "Escolha uma opção:"
 OPTION_ID_PREFIX = "option_"
 
 
@@ -31,58 +39,84 @@ def send_whatsapp_message(to: str, body: str, force_mock: bool = False) -> dict[
         return send_text_message(to, body, force_mock=force_mock)
 
     options = _options_for_body(body)
-    if _is_entrega_pedido_body(body) and 0 < len(options) <= MAX_ENTREGA_LIST_OPTIONS:
-        if any(len(_clean_option_title(option["title"])) > MAX_LIST_TITLE_CHARS for option in options):
-            return send_text_message(to, _entrega_text_fallback(body), force_mock=force_mock)
-        result = send_list_message(
-            to,
-            _entrega_body_without_options(body),
-            _list_rows_from_options(options)[:MAX_ENTREGA_LIST_OPTIONS],
-            force_mock=force_mock,
-        )
-        return _fallback_to_text_if_needed(to, body, result, force_mock, interactive_type="list")
+    if not options:
+        return send_text_message(to, body, force_mock=force_mock)
 
-    if 0 < len(options) <= MAX_BUTTON_OPTIONS and any(
-        len(_clean_option_title(option["title"])) > MAX_BUTTON_TITLE_CHARS for option in options
-    ):
-        # Botão cortaria o texto ("Não, está mist..."); a lista mostra o título
-        # completo na descrição da linha.
-        result = send_list_message(
-            to,
-            _body_without_numbered_options(body),
-            _list_rows_from_options(options),
-            force_mock=force_mock,
-        )
-        return _fallback_to_text_if_needed(to, body, result, force_mock, interactive_type="list")
+    entrega = _is_entrega_pedido_body(body)
+    corpo = _entrega_body_without_options(body) if entrega else _body_without_numbered_options(body)
+    # Se a mensagem interativa falhar, a pergunta segue em texto numerado.
+    texto_alternativo = _entrega_text_fallback(body) if entrega else body
+    prefixo = None
+    if len(corpo) > MAX_INTERACTIVE_BODY_CHARS:
+        # Texto longo (resumos, painéis) vai antes, em texto; as opções seguem
+        # numa mensagem curta para continuarem a ser tocáveis.
+        prefixo = send_text_message(to, corpo, force_mock=force_mock)
+        if prefixo.get("status") == "error":
+            return prefixo
+        corpo = _titulo_das_opcoes(corpo)
 
-    if 0 < len(options) <= MAX_BUTTON_OPTIONS:
-        result = send_button_message(
-            to,
-            _body_without_numbered_options(body),
-            _buttons_from_options(options),
-            force_mock=force_mock,
+    # Botões não mostram descrição nem títulos acima de 20 caracteres.
+    usa_botoes = len(options) <= MAX_BUTTON_OPTIONS and all(
+        len(_clean_option_title(option["title"])) <= MAX_BUTTON_TITLE_CHARS and not option.get("description")
+        for option in options
+    )
+    if usa_botoes:
+        result = send_button_message(to, corpo, _buttons_from_options(options), force_mock=force_mock)
+        result = _fallback_to_text_if_needed(
+            to, texto_alternativo, result, force_mock, interactive_type="button"
         )
-        return _fallback_to_text_if_needed(to, body, result, force_mock, interactive_type="button")
+    else:
+        result = _send_list_chunks(to, texto_alternativo, corpo, _list_rows_from_options(options), force_mock)
+    if prefixo is not None:
+        result["previous_message"] = prefixo
+    return result
 
-    if _is_corrigir_pedido_body(body) and MAX_BUTTON_OPTIONS < len(options) <= MAX_CORRIGIR_LIST_OPTIONS:
-        result = send_list_message(
-            to,
-            _body_without_numbered_options(body),
-            _list_rows_from_options(options)[:MAX_CORRIGIR_LIST_OPTIONS],
-            force_mock=force_mock,
-        )
-        return _fallback_to_text_if_needed(to, body, result, force_mock, interactive_type="list")
 
-    if MAX_BUTTON_OPTIONS < len(options) <= MAX_LIST_OPTIONS:
-        result = send_list_message(
-            to,
-            _body_without_numbered_options(body),
-            _list_rows_from_options(options),
-            force_mock=force_mock,
-        )
-        return _fallback_to_text_if_needed(to, body, result, force_mock, interactive_type="list")
+def _titulo_das_opcoes(corpo: str) -> str:
+    """Corpo curto da mensagem de opções: a linha que as introduz, se houver."""
+    linhas = [linha.strip() for linha in (corpo or "").splitlines() if linha.strip()]
+    if linhas and linhas[-1].endswith(":") and len(linhas[-1]) <= 200:
+        return linhas[-1]
+    return CORPO_CURTO_OPCOES
 
-    return send_text_message(to, body, force_mock=force_mock)
+
+def _send_list_chunks(
+    to: str,
+    original_body: str,
+    corpo: str,
+    rows: list[dict[str, str]],
+    force_mock: bool,
+) -> dict[str, Any]:
+    """Envia as linhas em listas de até 10; acima disso, listas seguidas.
+
+    Os ids das linhas são globais (option_11, option_12...), por isso a
+    resposta a qualquer uma das listas chega ao agente com o número certo.
+    """
+    # Divide por igual (21 linhas → 7 + 7 + 7) para nenhuma lista ficar com uma linha só.
+    quantidade = -(-len(rows) // MAX_LIST_OPTIONS)
+    base, resto = divmod(len(rows), quantidade)
+    blocos, inicio_bloco = [], 0
+    for indice in range(quantidade):
+        tamanho = base + (1 if indice < resto else 0)
+        blocos.append(rows[inicio_bloco:inicio_bloco + tamanho])
+        inicio_bloco += tamanho
+    primeiro = None
+    inicio = 1
+    for indice, bloco in enumerate(blocos):
+        if indice == 0:
+            corpo_bloco = corpo
+        else:
+            corpo_bloco = f"Mais opções ({inicio}–{inicio + len(bloco) - 1}):"
+        inicio += len(bloco)
+        result = send_list_message(to, corpo_bloco, bloco, force_mock=force_mock)
+        if result.get("status") == "error":
+            # Qualquer falha: manda a pergunta inteira em texto numerado.
+            return _fallback_to_text_if_needed(to, original_body, result, force_mock, interactive_type="list")
+        if primeiro is None:
+            primeiro = result
+        else:
+            primeiro.setdefault("additional_messages", []).append(result)
+    return primeiro
 
 
 def send_text_message(to: str, body: str, force_mock: bool = False) -> dict[str, Any]:
@@ -132,7 +166,7 @@ def send_list_message(
     rows: list[dict[str, str]],
     force_mock: bool = False,
 ) -> dict[str, Any]:
-    max_rows = MAX_CORRIGIR_LIST_OPTIONS if len(rows) > MAX_LIST_OPTIONS else MAX_LIST_OPTIONS
+    max_rows = MAX_LIST_OPTIONS
     payload = {
         "messaging_product": "whatsapp",
         "to": to,
@@ -327,8 +361,14 @@ def _options_for_body(body: str) -> list[dict[str, str]]:
             {"id": "despejo_conformidade:nao", "title": "🚨 Não"},
         ]
 
+    adesivos = _adesivo_options(body)
+    if adesivos:
+        return adesivos
+    if "numero da frota da carrinha" in normalized and "sem frota" in normalized:
+        return [{"id": f"{OPTION_ID_PREFIX}0", "title": "🚫 Sem frota"}]
+
     numbered_options = _numbered_options_for_body(body)
-    if 0 < len(numbered_options) <= MAX_LIST_OPTIONS:
+    if numbered_options:
         options = _options_from_numbered_options(numbered_options)
         if options:
             return options
@@ -355,6 +395,9 @@ def _corrigir_pedido_options(body: str) -> list[dict[str, str]]:
     id_by_title = {
         "quantidade de carrinhas": "quantidade",
         "quantidade de contentores": "quantidade",
+        "numero de carrinhas": "quantidade",
+        "numero de contentores": "quantidade",
+        "pessoal para carregar": "mao_de_obra",
         "nome do cliente": "nome_cliente",
         "telefone": "telefone",
         "dia da entrega": "data_entrega",
@@ -365,6 +408,8 @@ def _corrigir_pedido_options(body: str) -> list[dict[str, str]]:
         "pessoal para carregamento": "mao_de_obra",
         "valor total": "valor_total",
         "status do pagamento": "status_pagamento",
+        "pagamento": "status_pagamento",
+        "dia e hora da chegada": "data_entrega",
         "forma de pagamento": "forma_pagamento",
         "endereco": "endereco",
         "ponto de referencia": "ponto_referencia",
@@ -392,19 +437,57 @@ def _entrega_pedido_options(body: str) -> list[dict[str, str]]:
         kind = _clean_option_title(match.group("kind"))
         row_id = match.group("id")
         if title and quantity and row_id:
-            options.append(
-                {
-                    "id": row_id,
-                    "title": title,
-                    "description": f"Quantidade: {quantity}",
-                    "preserve_title": "1",
-                }
-            )
+            descricao = f"Quantidade: {quantity}"
+            if len(title) > MAX_LIST_TITLE_CHARS:
+                # Nome inteiro na descrição (72 caracteres), seguido da quantidade.
+                descricao = f"{title} • {quantity}"
+            options.append({"id": row_id, "title": title, "description": descricao})
     return options
 
 
+_NUMBERED_LINE = re.compile(r"^\s*(\d+)\s*[\.\-\)]\s*(.+?)\s*$")
+# Só espaços na mesma linha: a resposta do comando "disponiveis" tem os
+# números em linhas separadas e deve continuar em texto.
+_ADESIVOS_LINE = re.compile(r"(?im)^[ \t]*contentores dispon[ií]veis:[ \t]*(\S.*)$")
+
+
+def _numbered_block(body: str) -> tuple[list[tuple[str, str]], set[int]]:
+    """Último bloco de opções 1, 2, 3... do texto e as linhas que ocupa.
+
+    Resumos podem ter outras linhas numeradas antes das opções (ex.: a lista
+    de contentores na confirmação da entrega); só o último bloco que começa
+    em 1 conta como opções.
+    """
+    bloco: list[tuple[int, str, str]] = []
+    for indice, linha in enumerate((body or "").splitlines()):
+        match = _NUMBERED_LINE.match(linha)
+        if not match:
+            continue
+        numero, titulo = match.group(1), match.group(2)
+        if numero == "1":
+            bloco = [(indice, numero, titulo)]
+        elif bloco and int(numero) == int(bloco[-1][1]) + 1:
+            bloco.append((indice, numero, titulo))
+        else:
+            bloco = []
+    return [(numero, titulo) for _i, numero, titulo in bloco], {i for i, _n, _t in bloco}
+
+
 def _numbered_options_for_body(body: str) -> list[tuple[str, str]]:
-    return re.findall(r"(?im)^\s*(\d+)\s*[\.\-\)]\s*(.+?)\s*$", body or "")
+    return _numbered_block(body)[0]
+
+
+def _adesivo_options(body: str) -> list[dict[str, str]]:
+    """Contentores disponíveis na frota viram linhas com id adesivo:N."""
+    match = _ADESIVOS_LINE.search(body or "")
+    if not match:
+        return []
+    numeros = [numero for numero in re.findall(r"\d+", match.group(1))]
+    if not numeros:
+        return []
+    options = [{"id": f"adesivo:{numero}", "title": f"📦 Contentor {numero}"} for numero in numeros]
+    options.append({"id": "digitar", "title": "✏️ Outro número"})
+    return options
 
 
 def _options_from_numbered_options(numbered_options: list[tuple[str, str]]) -> list[dict[str, str]]:
@@ -418,8 +501,34 @@ def _options_from_numbered_options(numbered_options: list[tuple[str, str]]) -> l
         option_title = _clean_option_title(title)
         if not option_title:
             return []
-        options.append({"id": f"{OPTION_ID_PREFIX}{number}", "title": option_title})
+        comando = _COMANDO_DA_OPCAO.fullmatch(option_title)
+        if comando:
+            # "🛠️ Avaria Nº 3 • Obra Alfa — envie: resolver avaria 1": o toque
+            # envia o comando; em texto, a linha continua a dizer o que enviar.
+            options.append({"id": comando.group("comando"), "title": comando.group("titulo")})
+            continue
+        options.append({"id": _option_id(number, option_title), "title": option_title})
     return options
+
+
+_COMANDO_DA_OPCAO = re.compile(r"(?P<titulo>.+?)\s+—\s+envie:\s+(?P<comando>\S.*)")
+
+
+def _option_id(number: str, title: str) -> str:
+    """Id da linha/botão; o parser devolve o id como texto da resposta.
+
+    Datas e horários levam o próprio valor (os agentes já aceitam esse texto
+    digitado) e as opções "✏️ ..." levam "digitar", que o roteador V24 troca
+    pela pergunta de digitação. As demais levam option_N (resposta "N").
+    """
+    if title.startswith("✏️"):
+        return "digitar"
+    data = re.fullmatch(r"(?:\w{3}\s+)?(\d{2}/\d{2}/\d{4})", title)
+    if data:
+        return data.group(1)
+    if re.fullmatch(r"\d{2}:\d{2}", title):
+        return title
+    return f"{OPTION_ID_PREFIX}{number}"
 
 
 def _buttons_from_numbered_options(numbered_options: list[tuple[str, str]]) -> list[dict[str, str]]:
@@ -439,19 +548,45 @@ def _buttons_from_options(options: list[dict[str, str]]) -> list[dict[str, str]]
     return buttons
 
 
+_SEPARADOR_TITULO = re.compile(r"\s+[-•]\s+")
+
+
+def _dividir_titulo(title: str) -> tuple[str, str | None]:
+    """Título longo "#1 - Obra Alfa - 📦 2 Contentores" vira título + descrição.
+
+    As partes separadas por " - " ou " • " entram no título enquanto cabem
+    em 24 caracteres; o resto vai para a descrição. Sem separador útil, o
+    título é cortado e a descrição leva o texto inteiro.
+    """
+    clean = _clean_option_title(title)
+    if len(clean) <= MAX_LIST_TITLE_CHARS:
+        return clean, None
+    partes = _SEPARADOR_TITULO.split(clean)
+    separadores = _SEPARADOR_TITULO.findall(clean)
+    titulo, indice = partes[0], 1
+    while indice < len(partes) and len(titulo + separadores[indice - 1] + partes[indice]) <= MAX_LIST_TITLE_CHARS:
+        titulo += separadores[indice - 1] + partes[indice]
+        indice += 1
+    # Uma parte só serve de título se disser algo sozinha ("⚖️ Carga Nº 4");
+    # "#12" sem o nome não serve.
+    if indice == len(partes) or len(titulo) > MAX_LIST_TITLE_CHARS or (indice < 2 and len(titulo) < 8):
+        return _truncate_title(clean, MAX_LIST_TITLE_CHARS), clean
+    return titulo, " • ".join(partes[indice:])
+
+
 def _list_rows_from_options(options: list[dict[str, str]]) -> list[dict[str, str]]:
     rows = []
     for option in options:
+        description = option.get("description")
         if option.get("preserve_title"):
             row_title = _clean_option_title(option["title"])
-        else:
+        elif description:
             row_title = _truncate_title(option["title"], MAX_LIST_TITLE_CHARS)
+        else:
+            row_title, description = _dividir_titulo(option["title"])
         if not row_title:
             return []
         row = {"id": option["id"], "title": row_title}
-        description = option.get("description")
-        if not description and row_title != _clean_option_title(option["title"]):
-            description = _clean_option_title(option["title"])
         if description:
             row["description"] = _truncate_title(description, MAX_LIST_DESCRIPTION_CHARS)
         rows.append(row)
@@ -479,9 +614,10 @@ def _truncate_title(title: str, max_chars: int) -> str:
 
 
 def _body_without_numbered_options(body: str) -> str:
+    _opcoes, indices = _numbered_block(body)
     lines = []
-    for line in (body or "").splitlines():
-        if re.match(r"^\s*\d+\s*[\.\-\)]\s*.+?\s*$", line):
+    for indice, line in enumerate((body or "").splitlines()):
+        if indice in indices or _ADESIVOS_LINE.match(line):
             continue
         lines.append(line)
     cleaned = "\n".join(lines).strip()

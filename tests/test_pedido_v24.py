@@ -103,7 +103,7 @@ def test_despejo_v24_mensagem_e_persistencia_usam_mesma_regra_de_divergencia(
     confirmacao = agent._despejo_confirmacao_prompt(ctx)
     agent._confirmar_despejo_atual(SimpleNamespace(telefone="operador"), ctx)
 
-    assert f"Divergencia: {'Sim' if esperado else 'Nao'}" in confirmacao
+    assert f"Divergência: {'Sim' if esperado else 'Não'}" in confirmacao
     assert agent.service.confirmar_despejo.call_args.args[2] is esperado
 
 
@@ -1011,7 +1011,8 @@ def test_cadastro_v24_carrinha_valida_horario_e_mao_de_obra(db_session, monkeypa
 
     for text in ["novo pedido", "carrinha", "1", "Cliente Carrinha", "351912345678", "Hoje"]:
         response = router.handle(msg(text))
-    assert "HH:MM" in response
+    # Horário em lista (08:00-16:00 + "✏️ Outro horário"); digitar HH:MM continua aceito.
+    assert "1. 08:00" in response and "10. ✏️ Outro horário" in response
     invalid = router.handle(msg("99:99"))
     assert "Horário inválido" in invalid
     residuo_prompt = router.handle(msg("09:30"))
@@ -1047,7 +1048,7 @@ def test_cadastro_v24_carrinha_ordem_quantidade_cliente_data_hora_residuo(db_ses
     assert "nome do cliente" in router.handle(msg("2")).lower()
     assert "telefone do cliente" in router.handle(msg("Cliente Ordem")).lower()
     assert "planejada a chegada" in router.handle(msg("351912345678")).lower()
-    assert "HH:MM" in router.handle(msg("Hoje"))
+    assert "Outro horário" in router.handle(msg("Hoje"))
     assert "Resíduo da carrinha 1/2" in router.handle(msg("08:45"))
 
     conversa = db_session.query(ConversaWhatsApp).one()
@@ -1055,7 +1056,7 @@ def test_cadastro_v24_carrinha_ordem_quantidade_cliente_data_hora_residuo(db_ses
     assert conversa.contexto_json["nome"] == "Cliente Ordem"
 
 
-def test_cadastro_v24_corrigir_com_mais_de_10_campos_vai_como_texto_e_edita_quantidade(db_session, monkeypatch):
+def test_cadastro_v24_corrigir_cabe_numa_lista_e_edita_quantidade(db_session, monkeypatch):
     liberar_operadores(monkeypatch)
     router = WhatsappRouterAgent(db_session)
     steps = [
@@ -1069,19 +1070,23 @@ def test_cadastro_v24_corrigir_com_mais_de_10_campos_vai_como_texto_e_edita_quan
 
     corrigir = router.handle(msg("Corrigir"))
     result = send_whatsapp_message("351900009900", corrigir, force_mock=True)
-    # Carrinha paga tem 12 campos; a lista da Meta aceita no máximo 10 linhas,
-    # por isso o menu vai como texto numerado.
-    assert "interactive_type" not in result
-    assert "1. Quantidade de carrinhas" in result["body"]
-    assert "5. Hora da chegada" in result["body"]
+    # A lista da Meta aceita no máximo 10 linhas: "Pagamento" e "Dia e hora
+    # da chegada" agrupam campos para o menu caber numa lista só.
+    assert result["interactive_type"] == "list"
+    assert len(result["list_rows"]) == 10
+    assert result["list_rows"][0]["id"] == "corrigir_pedido:quantidade"
+    assert result["list_rows"][3]["title"] == "Dia e hora da chegada"
 
     prompt = router.handle(msg("1"))
     assert "carrinhas" in prompt.lower()
+    # A carrinha nova pede o seu resíduo antes de voltar ao resumo.
+    assert "Resíduo da carrinha 2/2" in router.handle(msg("2"))
     confirmacao = router.handle(msg("2"))
     conversa = db_session.query(ConversaWhatsApp).one()
 
     assert conversa.estado_atual == "v24_cadastro_confirmacao"
     assert "Quantidade de carrinhas: 2" in confirmacao
+    assert "Tipo de resíduo: Entulho Limpo, Entulho Misto" in confirmacao
     assert "Cliente: Cliente Corrigir" in confirmacao
     assert db_session.query(Pedido).count() == 0
 
@@ -1318,7 +1323,7 @@ def test_entrega_v24_selecao_de_pedido_usa_lista_com_cliente_inteiro(db_session,
     assert "número do contentor" in prompt
 
 
-def test_entrega_v24_nome_longo_usa_fallback_seguro_sem_id_interno(db_session, monkeypatch):
+def test_entrega_v24_nome_longo_vai_na_descricao_da_lista(db_session, monkeypatch):
     liberar_operadores(monkeypatch)
     nome_cliente = "Cliente Empresarial Nome Muito Longo Para Entrega"
     pedido = PedidoService(db_session).criar(
@@ -1338,9 +1343,12 @@ def test_entrega_v24_nome_longo_usa_fallback_seguro_sem_id_interno(db_session, m
     body = router.handle(msg("2"))
     sent = send_whatsapp_message("351900009900", body, force_mock=True)
 
-    assert "list_rows" not in sent
-    assert nome_cliente in sent["body"]
-    assert "Quantidade: 2 equipamentos" in sent["body"]
+    # Título da linha cortado em 24 caracteres; o nome inteiro vai na descrição.
+    linha = sent["list_rows"][0]
+    assert linha["id"] == f"entrega_pedido:{pedido.id}"
+    assert linha["title"] == "Cliente Empresarial N..."
+    assert linha["description"].startswith(nome_cliente)
+    assert linha["description"].endswith("• 2 equipamentos")
     assert "entrega_pedido" not in sent["body"]
     assert f"ID: {pedido.id}" not in sent["body"]
     assert "Contentor x2" not in sent["body"]
@@ -1632,7 +1640,7 @@ def test_recolha_v24_confirma_todos_ativos_do_pedido_em_loop(db_session, monkeyp
     assert "Contentor 81" not in segundo_prompt
     assert "Contentor 82" in segundo_prompt
     assert "Contentor 82" in segundo_foto
-    assert "Recolha do pedido concluida" in final
+    assert "Recolha do pedido concluída" in final
     assert router.pop_pending_messages() == [MAIN_MENU]
     assert all(item.status_recolha == StatusRecolhaPedido.RECOLHIDO.value for item in pedido.contentores)
     fotos_recolha = (
@@ -1684,7 +1692,7 @@ def test_recolha_v24_termino_parcial_mantem_restante_pendente_e_menu_separado(db
     db_session.refresh(pedido.contentores[0])
     db_session.refresh(pedido.contentores[1])
     conversa = db_session.query(ConversaWhatsApp).one()
-    assert "Terminar recolhas deste cliente" in ativos
+    assert "Terminar recolhas" in ativos
     assert "Contentor 92" in restantes
     assert "encerradas" in response
     assert pedido.contentores[0].status_recolha == StatusRecolhaPedido.RECOLHIDO.value
@@ -1829,7 +1837,7 @@ def test_recolha_v24_avaria_exige_relato_curto_rejeita_e_valido_cria_pendencia(d
     db_session.refresh(pedido.contentores[0])
     assert "pelo menos 10" in curto
     assert "Relato: porta lateral amassada" in confirmacao
-    assert "pendencia de avaria" in final
+    assert "pendência de avaria" in final
     assert pedido.contentores[0].contentor_avariado is True
     assert pedido.contentores[0].relato_avaria == "porta lateral amassada"
     assert pedido.contentores[0].status_resolucao_avaria == StatusResolucaoPedido.PENDENTE.value
@@ -2099,6 +2107,8 @@ def test_despejo_v24_loop_confirma_um_ativo_e_mostra_restantes_sem_novo_cliente(
     assert "Contentor 201" in foto_prompt
     assert "Fotos: 2" in confirmacao
     assert "Contentor 202" in restantes
+    assert "Resta 1 contentor pendente neste pedido." in restantes
+    assert restantes.count("Selecione") == 1
     assert pedido.contentores[0].status_ciclo == StatusCicloPedido.CONCLUIDO.value
     assert pedido.contentores[1].status_ciclo == StatusCicloPedido.EM_ANDAMENTO.value
     assert pedido.contentores[0].despejo_feito_por == "351900009900"
@@ -2233,7 +2243,7 @@ def test_despejo_v24_cota_esgotada_entre_escolha_e_confirmacao_nao_salva(db_sess
 
     db_session.refresh(pedido.contentores[0])
     db_session.refresh(pedido.contentores[1])
-    assert "Residuo efetivo: Entulho Limpo" in confirmacao
+    assert "Resíduo efetivo: Entulho Limpo" in confirmacao
     assert "Não existe cota em aberto" in response
     assert pedido.contentores[0].status_ciclo == StatusCicloPedido.EM_ANDAMENTO.value
     assert pedido.contentores[0].despejo_data_hora is None
@@ -2282,6 +2292,55 @@ def test_despejo_v24_ultimo_ativo_encerra_fluxo_e_menu_separado(db_session, monk
     assert conversa.estado_atual == "idle"
     assert conversa.contexto_json == {}
     assert router.pop_pending_messages() == [MAIN_MENU]
+
+
+@pytest.mark.parametrize("tipo", ["CONTENTOR", "CARRINHA"])
+def test_despejo_v24_voltar_na_confirmacao_mantem_as_fotos(db_session, monkeypatch, tipo):
+    # Teste de UX (12/10/2026): depois de "Voltar" e de refazer a
+    # conformidade, o motorista tinha de enviar outra foto.
+    liberar_operadores(monkeypatch)
+    service = PedidoService(db_session)
+    item = {"tipo_equipamento": tipo, "residuo_contratado": "Entulho Limpo"}
+    if tipo == "CARRINHA":
+        item["horario_agendado"] = "09:00"
+    pedido = service.criar(
+        nome_cliente="Cliente Voltar Despejo",
+        telefone_cliente="351912345678",
+        data_planejada=datetime.now(timezone.utc),
+        valor_global="200",
+        pago=True,
+        forma_pagamento="MBWay",
+        pedido_feito_por="gestor",
+        endereco_aproximado="Rua",
+        ponto_referencia=None,
+        itens=[item],
+    )
+    ativo = pedido.contentores[0]
+    if tipo == "CARRINHA":
+        service.confirmar_chegada_carrinha_lote_transacional(
+            pedido.id, "motorista", 38.7, -9.1, None,
+            [{"contentor_id": ativo.id, "numero_adesivo": "0", "fotos": ["foto-chegada"]}],
+        )
+        service.confirmar_partida_carrinha(ativo.id, "motorista", False, None, ["foto-partida"])
+    else:
+        service.confirmar_entrega_lote(
+            pedido.id, "motorista", 38.7, -9.1, None,
+            [{"contentor_id": ativo.id, "numero_adesivo": "204", "fotos": ["foto-204"]}],
+        )
+        service.confirmar_recolha(ativo.id, "motorista", False, None)
+    router = WhatsappRouterAgent(db_session)
+    for item in ["4", "1", "1", "despejo_conformidade:sim"]:
+        router.handle(msg(item))
+    router.handle(msg(kind="image", media="foto-despejo"))
+    assert "Confirme o despejo" in router.handle(msg("2"))
+
+    router.handle(msg("2"))  # Voltar
+    response = router.handle(msg("despejo_conformidade:sim"))
+
+    conversa = db_session.query(ConversaWhatsApp).one()
+    assert conversa.estado_atual == "v24_despejo_confirmacao"
+    assert "Confirme o despejo" in response and "Fotos: 1" in response
+    assert "concluído" in router.handle(msg("1"))
 
 
 def test_despejo_v24_termino_parcial_preserva_ativos_em_andamento(db_session, monkeypatch):
@@ -2455,8 +2514,8 @@ def test_despejo_v24_divergencia_valida_cria_pendencia_e_rejeita_relato_curto(db
     assert "pelo menos 10" in curto
     assert "Envie a foto" in foto
     assert "Confirmar despejo" in confirmacao
-    assert "Residuo efetivo: Entulho Misto" in confirmacao
-    assert "Divergencia: Sim" in confirmacao
+    assert "Resíduo efetivo: Entulho Misto" in confirmacao
+    assert "Divergência: Sim" in confirmacao
     assert "processado no vazadouro" in final
     # Grava o resíduo que caiu de fato, mesmo sem cota de Misto no pedido.
     assert pedido.contentores[0].residuo_efetivo_vazadouro == "Entulho Misto"
@@ -2685,7 +2744,7 @@ def test_resumo_v32_funcionario_oculta_comercial_financeiro_pagamentos_e_carga(d
     assert "1. VENCEM AMANHA" not in response
     assert "5. RESUMO FINANCEIRO" not in response
     assert "Pagamentos pendentes" not in response
-    assert "Divergencias de residuo" not in response
+    assert "Divergências de resíduo" not in response
     assert "valor" not in response.lower()
     assert "EUR" not in response
     assert "Avarias em Equipamentos" in response
@@ -2731,8 +2790,12 @@ def test_resumo_v33_agrupa_pedido_sem_duplicar_ativos_fotos_ou_pendencias(db_ses
     db_session.commit()
 
     response = WhatsappRouterAgent(db_session).handle(msg("resumo", phone=gestor))
+    # As "⚡ Ações rápidas" (12/10/2026) repetem o cliente uma vez por
+    # avaria a resolver; o resto do painel continua sem duplicar.
+    painel, _, acoes = response.partition("⚡ *Ações rápidas*")
 
-    assert response.count("Cliente Sem Duplicar") == 3
+    assert painel.count("Cliente Sem Duplicar") == 3
+    assert acoes.count("Cliente Sem Duplicar") == 1
     assert "44" in response
     assert "45" in response
     assert "45, 45" not in response
@@ -3131,7 +3194,7 @@ def test_despejo_v24_contentores_trocados_no_pedido_nao_sao_divergencia(db_sessi
     primeiro = router.handle(msg("1"))
 
     assert "Envie a foto do despejo" in foto
-    assert "Divergencia: Nao" in confirmacao
+    assert "Divergência: Não" in confirmacao
     assert "processado no vazadouro" in primeiro
     db_session.refresh(limpo)
     assert limpo.residuo_efetivo_vazadouro == "Entulho Misto"
@@ -3209,7 +3272,7 @@ def test_despejo_v24_residuo_igual_ao_contratado_segue_sem_relato(db_session, mo
     confirmacao = router.handle(msg("2"))
 
     assert "Envie a foto do despejo" in foto
-    assert "Divergencia: Nao" in confirmacao
+    assert "Divergência: Não" in confirmacao
 
 
 @pytest.mark.parametrize("palavra", ["entrega", "entregar", "confirmar entrega"])
@@ -3403,6 +3466,23 @@ def test_nao_continuar_retoma_cadastro_legado_com_pergunta(db_session, monkeypat
     assert "Operação retomada" in response
     assert "nome do cliente" in response
     assert db_session.query(ConversaWhatsApp).one().estado_atual == "aguardando_nome_cliente"
+
+
+def test_nao_continuar_reenvia_a_ultima_pergunta_do_pedido(db_session, monkeypatch):
+    liberar_operadores(monkeypatch)
+    router = WhatsappRouterAgent(db_session)
+    for texto in ["1", "1", "Cliente Retoma", "912345678"]:
+        pergunta = router.handle(msg(texto))
+    router.handle(msg("abc"))  # resposta inválida não substitui a pergunta
+
+    router.handle(msg("cancelar"))
+    response = router.handle(msg("2"))
+
+    assert response.startswith("↩️ Operação retomada.")
+    assert pergunta in response
+    assert db_session.query(ConversaWhatsApp).one().estado_atual == "v24_cadastro_quantidade"
+    router.handle(msg("cancelar"))
+    assert router.handle(msg("2")).count("Operação retomada") == 1
 
 
 def test_proximo_passo_depois_de_outra_foto_avanca_sem_nova_imagem(db_session, monkeypatch):

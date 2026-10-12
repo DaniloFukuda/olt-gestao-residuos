@@ -1,6 +1,7 @@
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+import json
 import re
 from urllib.parse import quote
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -157,6 +158,49 @@ class WhatsappRouterAgent:
         return self.pedido_v24_router.backend
 
     def handle(self, message: NormalizedWhatsAppMessage) -> str:
+        antes = self._estado_conversa(message.telefone)
+        resposta = self._handle(message)
+        self._lembrar_pergunta(message.telefone, antes, resposta)
+        return resposta
+
+    def _estado_conversa(self, telefone: str):
+        conversa = (
+            self.db.query(ConversaWhatsApp)
+            .filter(ConversaWhatsApp.telefone == telefone)
+            .first()
+        )
+        if not conversa:
+            return None
+        return conversa.estado_atual, json.dumps(conversa.contexto_json or {}, sort_keys=True, default=str)
+
+    def _lembrar_pergunta(self, telefone: str, antes, resposta) -> None:
+        """Guarda a pergunta em curso para reenviá-la em "Não, continuar".
+
+        Só guarda quando a mensagem mudou o estado ou o contexto: uma resposta
+        de erro ("Selecione uma das opções") ou de acesso negado não substitui
+        a pergunta com as opções nem toca na conversa.
+        """
+        conversa = (
+            self.db.query(ConversaWhatsApp)
+            .filter(ConversaWhatsApp.telefone == telefone)
+            .first()
+        )
+        if not conversa or (antes and antes[0] == CONFIRMAR_CANCELAMENTO_STATE):
+            return
+        if conversa.estado_atual == CONFIRMAR_CANCELAMENTO_STATE:
+            return
+        if conversa.estado_atual == "idle":
+            if conversa.ultima_pergunta is not None:
+                conversa.ultima_pergunta = None
+                self.db.commit()
+            return
+        if not isinstance(resposta, str) or not resposta.strip():
+            return
+        if self._estado_conversa(telefone) != antes:
+            conversa.ultima_pergunta = resposta
+            self.db.commit()
+
+    def _handle(self, message: NormalizedWhatsAppMessage) -> str:
         self._pending_messages = []
         text = (message.texto or "").strip().lower()
         decisao = self.operador_service.decidir_acesso(message.telefone)
@@ -524,9 +568,61 @@ class WhatsappRouterAgent:
         ]
         if perfil == PerfilOperador.GESTOR:
             linhas.extend(["", self._painel_v4_financeiro(pedidos, alugueres, today)])
-            if self.pedido_service.pedidos_pagamento_pendente():
-                linhas.extend(["", "💶 Registrar pagamento pendente"])
+        acoes = self._painel_v4_acoes_rapidas(pedidos, alugueres, perfil)
+        if acoes:
+            linhas.extend(["", "⚡ *Ações rápidas* (toque para abrir):"])
+            linhas.extend(f"{indice}. {acao}" for indice, acao in enumerate(acoes, 1))
         return "\n".join(linhas)
+
+    def _painel_v4_acoes_rapidas(self, pedidos, alugueres, perfil: PerfilOperador) -> list[str]:
+        """Comandos do painel como opções tocáveis (antes: digitar "resolver avaria N").
+
+        Cada linha termina com " — envie: comando"; o cliente WhatsApp usa o
+        comando como id da linha da lista, e o toque chega ao roteador como se
+        tivesse sido digitado.
+        """
+        acoes = []
+        if perfil == PerfilOperador.GESTOR and self.pedido_service.pedidos_pagamento_pendente():
+            acoes.append("💶 Registrar pagamento — envie: registrar pagamento")
+        if not self._can_execute_command(perfil, COMMAND_FAMILY_RESOLUTION):
+            return acoes
+        if self._avarias_enabled():
+            acoes.extend(self._acao_rapida_avaria(item) for item in self._avarias_ativas(pedidos))
+            acoes.extend(
+                self._acao_rapida_avaria_aluguer(aluguer)
+                for aluguer in self._alugueres_avarias_ativas(alugueres)
+            )
+        if perfil == PerfilOperador.GESTOR:
+            acoes.extend(self._acao_rapida_carga(item) for item in self._cargas_divergentes(pedidos))
+        # IDs de pedido_contentores e alugueres_contentor podem colidir; a Meta
+        # recusa linhas com o mesmo id, e o comando repetido abriria a mesma
+        # revisão. Fica a primeira.
+        unicas, comandos = [], set()
+        for acao in acoes:
+            comando = acao.rsplit(" — envie: ", 1)[-1]
+            if comando not in comandos:
+                comandos.add(comando)
+                unicas.append(acao)
+        return unicas
+
+    def _acao_rapida_avaria(self, item: PedidoContentor) -> str:
+        return (
+            f"🛠️ Avaria Nº {self._equipamento_numero(item)} • {item.pedido.nome_cliente}"
+            f" — envie: resolver avaria {item.id}"
+        )
+
+    @staticmethod
+    def _acao_rapida_avaria_aluguer(aluguer: AluguerContentor) -> str:
+        return (
+            f"🛠️ Avaria Nº {aluguer.numero_contentor} • {aluguer.nome_cliente}"
+            f" — envie: resolver avaria {aluguer.id}"
+        )
+
+    def _acao_rapida_carga(self, item: PedidoContentor) -> str:
+        return (
+            f"⚖️ Carga Nº {self._numero_equipamento_pedido(item)} • {item.pedido.nome_cliente}"
+            f" — envie: resolver carga {item.id}"
+        )
 
     def _painel_v4_acoes_hoje(self, pedidos: list[Pedido], alugueres: list[AluguerContentor], today, perfil: PerfilOperador) -> str:
         settings = get_settings()
@@ -1137,7 +1233,7 @@ class WhatsappRouterAgent:
     def _render_recolha_carrinhas(self, pedido: Pedido, carrinhas: list[PedidoContentor]) -> str:
         horarios = ", ".join(
             self._unique_sorted(
-                item.horario_agendado or "sem horario"
+                item.horario_agendado or "sem horário"
                 for item in carrinhas
             )
         )
@@ -1172,7 +1268,7 @@ class WhatsappRouterAgent:
                     link = f" | Cobrar: {whatsapp_link(pedido.telefone_cliente)}" if pedido.telefone_cliente else ""
                     linhas.append(f"- #{pedido.id} {pedido.nome_cliente}: {self._money(pedido.valor_global)}{link}")
             if itens["cargas"]:
-                linhas.append("Divergencias de residuo:")
+                linhas.append("Divergências de resíduo:")
                 for item in itens["cargas"]:
                     linhas.append(
                         f"- {self._painel_v32_equipamento(item)} | {item.pedido.nome_cliente}: "
@@ -1186,7 +1282,7 @@ class WhatsappRouterAgent:
                     f"- {self._painel_v32_equipamento(item)} | {item.pedido.nome_cliente}: "
                     f"{item.relato_avaria or 'sem relato'} | resolver avaria {item.id}"
                 )
-        return "\n".join(linhas) if linhas else "Nenhuma pendencia ativa."
+        return "\n".join(linhas) if linhas else "Nenhuma pendência ativa."
 
     def _painel_v32_financeiro(self, pedidos: list[Pedido], today) -> str:
         totais = {
@@ -1391,7 +1487,9 @@ class WhatsappRouterAgent:
         contentores = self.contentor_service.listar_contentores()
         if not contentores:
             return "Ainda não existem contentores registados."
-        return "\n".join(f"{contentor.codigo} - {self._format_contentor_status(contentor.status)}" for contentor in contentores)
+        # "•" no início: listagem informativa, não opções (o cliente WhatsApp
+        # transformaria "1 - ...", "2 - ..." em lista tocável).
+        return "\n".join(f"• {contentor.codigo} - {self._format_contentor_status(contentor.status)}" for contentor in contentores)
 
     def _disponiveis(self) -> str:
         contentores = [
@@ -1448,7 +1546,7 @@ class WhatsappRouterAgent:
     def _format_item_v24(self, pedido: Pedido, item: PedidoContentor) -> str:
         vencimento = self._local_date(item.entrega_data_hora) + timedelta(days=5)
         return (
-            f"{self._equipamento_numero(item)} - {pedido.nome_cliente} - "
+            f"• {self._equipamento_numero(item)} - {pedido.nome_cliente} - "
             f"vencimento {vencimento:%d/%m/%Y} - pedido #{pedido.id}"
         )
 
@@ -1502,7 +1600,7 @@ class WhatsappRouterAgent:
             linhas.extend(
                 [self._format_pendencia_financeira(aluguer) for aluguer in pendencias_financeiras]
                 if pendencias_financeiras
-                else ["Nenhuma pendencia financeira."]
+                else ["Nenhuma pendência financeira."]
             )
         else:
             linhas.append("💸 Pendencias financeiras: ocultas para este perfil.")
@@ -1510,14 +1608,14 @@ class WhatsappRouterAgent:
         linhas.extend(
             [self._format_pendencia_carga(aluguer) for aluguer in pendencias_carga]
             if pendencias_carga
-            else ["Nenhuma pendencia de carga."]
+            else ["Nenhuma pendência de carga."]
         )
         if self._avarias_enabled():
             linhas.append(f"🛠️ Pendencias de avarias: {len(pendencias_avaria)}")
             linhas.extend(
                 [self._format_pendencia_avaria(aluguer) for aluguer in pendencias_avaria]
                 if pendencias_avaria
-                else ["Nenhuma pendencia de avaria."]
+                else ["Nenhuma pendência de avaria."]
             )
         return linhas
 
@@ -2009,7 +2107,7 @@ class WhatsappRouterAgent:
     def _format_aluguer(self, aluguer: AluguerContentor) -> str:
         vencimento = aluguer.data_vencimento.strftime("%d/%m/%Y")
         return (
-            f"{aluguer.contentor.codigo} - {aluguer.nome_cliente} - "
+            f"• {aluguer.contentor.codigo} - {aluguer.nome_cliente} - "
             f"vencimento {vencimento} - {self._format_aluguer_status(aluguer.status)}"
         )
 
@@ -2063,6 +2161,8 @@ class WhatsappRouterAgent:
         self.db.commit()
         if estado_anterior in AluguerAgent.ACTIVE_STATES:
             return "↩️ Operação retomada. " + self._prompt_for_state(estado_anterior)
+        if conversa.ultima_pergunta:
+            return "↩️ Operação retomada.\n\n" + conversa.ultima_pergunta
         return "↩️ Operação retomada. Responda à última pergunta para continuar."
 
     def _has_active_flow(self, conversa: ConversaWhatsApp) -> bool:

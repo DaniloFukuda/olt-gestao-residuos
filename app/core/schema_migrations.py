@@ -38,6 +38,11 @@ ALUGUERES_CONTENTOR_COLUMNS = {
 }
 
 
+CONVERSAS_WHATSAPP_COLUMNS = {
+    "ultima_pergunta": "TEXT",
+}
+
+
 CONTENTORES_COLUMNS = {
     "criado_por_operador": "TEXT",
     "alterado_por_operador": "TEXT",
@@ -215,6 +220,15 @@ def ensure_alugueres_contentor_schema(engine: Engine) -> None:
                 """
             )
         )
+        conversas_columns = {
+            row["name"]
+            for row in connection.execute(text("PRAGMA table_info(conversas_whatsapp)")).mappings()
+        }
+        for column_name, column_definition in CONVERSAS_WHATSAPP_COLUMNS.items():
+            if conversas_columns and column_name not in conversas_columns:
+                connection.execute(
+                    text(f"ALTER TABLE conversas_whatsapp ADD COLUMN {column_name} {column_definition}")
+                )
         contentores_columns = {
             row["name"]
             for row in connection.execute(text("PRAGMA table_info(contentores)")).mappings()

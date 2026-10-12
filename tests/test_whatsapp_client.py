@@ -303,12 +303,14 @@ def test_send_whatsapp_message_correcao_com_10_campos_continua_lista(monkeypatch
     assert len(result["list_rows"]) == 10
 
 
-def test_send_whatsapp_message_correcao_com_11_campos_vai_como_texto(monkeypatch):
-    # Limite da Meta: 10 linhas por lista. Pedido pago tem também "Forma de pagamento".
+def test_send_whatsapp_message_mais_de_10_opcoes_vao_em_listas_seguidas(monkeypatch):
+    # Limite da Meta: 10 linhas por lista. Com 11 opções, a 11.ª vai numa segunda lista.
     clear_settings(monkeypatch)
     campos = [*CAMPOS_CORRECAO_CONTENTOR[:8], "Forma de pagamento", *CAMPOS_CORRECAO_CONTENTOR[8:]]
 
     result = send_whatsapp_message("351900000000", _menu_correcao(campos))
 
-    assert "interactive_type" not in result
-    assert "11. Ponto de referência" in result["body"]
+    assert result["interactive_type"] == "list"
+    assert len(result["list_rows"]) == 6
+    assert [row["title"] for row in result["additional_messages"][0]["list_rows"]][-1] == "Ponto de referência"
+    assert len(result["additional_messages"][0]["list_rows"]) == 5

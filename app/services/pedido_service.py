@@ -480,6 +480,16 @@ class PedidoService:
             .first()
         )
 
+    def numeros_frota_disponiveis(self) -> list[str]:
+        codigos = [
+            contentor.codigo
+            for contentor in self.db.query(Contentor)
+            .filter(Contentor.is_deleted.is_(False))
+            .filter(Contentor.status == StatusContentor.DISPONIVEL)
+            .all()
+        ]
+        return sorted(codigos, key=lambda codigo: (not codigo.isdigit(), int(codigo) if codigo.isdigit() else 0, codigo))
+
     def erro_frota_entrega(self, numero: str) -> str | None:
         """Mensagem para o motorista quando o número não serve para a entrega."""
         if not self._frota_ativa():

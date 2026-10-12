@@ -77,7 +77,7 @@ class CarrinhaOperationalAgent:
         if not snapshot["ativo_exists"] or snapshot["status_operacional"] != "AGUARDANDO_CHEGADA":
             return IdleTransition("Esse ativo já não está pendente. Reinicie a chegada.")
         if not re.fullmatch(r"\d{1,6}", number):
-            return "Informe o número da frota da carrinha ou 0 se não houver."
+            return "Informe o número da frota da carrinha ou toque em Sem frota."
         if number != "0" and number in [str(item.get("numero_adesivo")) for item in ctx.get("entregas") or []]:
             return "Esse número de frota já foi informado neste lote."
         entregas = list(ctx.get("entregas") or [])
@@ -127,7 +127,7 @@ class CarrinhaOperationalAgent:
             return AdvanceTransition(
                 "v24_entrega_adesivo", ctx,
                 f"Carrinha {registrado} de {total} registrada.\n\nVamos registrar a próxima.\n\n"
-                "Confirme o número da frota da carrinha alocada (ou digite 0 se não houver):",
+                "Digite o número da frota da carrinha alocada ou toque em Sem frota:",
             )
         return AdvanceTransition(
             "v24_entrega_gps", ctx,
@@ -218,7 +218,7 @@ class CarrinhaOperationalAgent:
             if not avarias_enabled:
                 ctx.pop("avariado", None); ctx.pop("relato_avaria", None)
                 return PrepararConfirmacaoPartidaCarrinha(ctx)
-            return AdvanceTransition("v24_recolha_avaria", ctx, "O equipamento sofreu algum estrago ou avaria na obra?\n\n1. ✅ Não, está perfeito\n2. 💥 Sim, está estragado")
+            return AdvanceTransition("v24_recolha_avaria", ctx, "O equipamento sofreu algum estrago ou avaria na obra?\n\n1. ✅ Sem avaria\n2. 💥 Com avaria")
         return "Selecione Outra Foto ou Próximo Passo."
 
     def decide_partida_avaria(self, conversa, message, *, avarias_enabled):
@@ -226,10 +226,10 @@ class CarrinhaOperationalAgent:
         if not avarias_enabled:
             return self._recover_disabled_partida_avaria(ctx)
         choice = self._normalize(message.texto)
-        if choice in {"1", "nao, esta perfeito", "✅ nao, esta perfeito"}:
+        if choice in {"1", "nao, esta perfeito", "✅ nao, esta perfeito", "sem avaria", "✅ sem avaria"}:
             ctx.update({"avariado": False, "relato_avaria": None})
             return PrepararConfirmacaoPartidaCarrinha(ctx)
-        if choice in {"2", "sim, esta estragado", "💥 sim, esta estragado"}:
+        if choice in {"2", "sim, esta estragado", "💥 sim, esta estragado", "com avaria", "💥 com avaria"}:
             ctx["avariado"] = True
             return AdvanceTransition("v24_recolha_relato", ctx, "Descreva a avaria com pelo menos 10 caracteres.")
         return "Selecione uma das opções de avaria."
