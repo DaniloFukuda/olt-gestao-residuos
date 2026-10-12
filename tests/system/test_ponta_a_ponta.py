@@ -323,7 +323,7 @@ def recolher(motorista: Operador, pedido: PedidoE2E) -> None:
         else:
             motorista.tocar("Sem avaria")
         resposta = motorista.tocar("Confirmar")
-    assert "concluida" in resposta
+    assert "concluída" in resposta
 
 
 def despejar(motorista: Operador, pedido: PedidoE2E) -> None:
@@ -345,8 +345,8 @@ def despejar(motorista: Operador, pedido: PedidoE2E) -> None:
             assert "Envie a foto" in motorista.tocar("Sim")
         motorista.foto()
         confirmacao = motorista.tocar("Próximo Passo")
-        esperado = "Sim" if passo.startswith("nao:") else "Nao"
-        assert f"Divergencia: {esperado}" in confirmacao
+        esperado = "Sim" if passo.startswith("nao:") else "Não"
+        assert f"Divergência: {esperado}" in confirmacao
         resposta = motorista.tocar("Confirmar despejo")
     assert "concluído" in resposta or "Nenhum" in resposta
 

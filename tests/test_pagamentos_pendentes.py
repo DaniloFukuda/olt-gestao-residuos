@@ -130,8 +130,8 @@ def test_lista_apenas_pendentes_positivos_sem_duplicar_e_classifica_tipos(db_ses
     pago = criar_pedido(db_session, nome="Já pago", pago=True)
     criar_pedido(db_session, nome="Sem saldo", valor="0")
     response = WhatsappRouterAgent(db_session).handle(msg("pagamentos pendentes"))
-    assert response.count(f"Pedido #{contentor.id}") == 1 and "Contentor • CONTENTOR" in response
-    assert response.count(f"Pedido #{carrinha.id}") == 1 and "Carrinha • CARRINHA" in response
+    assert response.count(f"Pedido #{contentor.id}") == 1 and "Contentor • 📦 Contentor" in response
+    assert response.count(f"Pedido #{carrinha.id}") == 1 and "Carrinha • 🚛 Carrinha" in response
     assert f"Pedido #{misto.id}" not in response and "Legado Misto" not in response
     assert f"Pedido #{pago.id}" not in response and "Sem saldo" not in response
 
@@ -140,7 +140,7 @@ def test_revisao_e_confirmacao_exibem_campos_obrigatorios(db_session, operadores
     pedido = criar_pedido(db_session, nome="Cliente Revisão")
     confirmacao = iniciar_ate_confirmacao(WhatsappRouterAgent(db_session), pedido.id)
     for trecho in (
-        f"Pedido: #{pedido.id}", "Cliente: Cliente Revisão", "Tipo: CARRINHA",
+        f"Pedido: #{pedido.id}", "Cliente: Cliente Revisão", "Tipo: 🚛 Carrinha",
         "Valor total: € 300,00", "Valor já pago: € 0,00", "Saldo pendente: € 300,00",
         "Status atual: PENDENTE", "Forma selecionada: MBWay", "saldo integral",
     ):

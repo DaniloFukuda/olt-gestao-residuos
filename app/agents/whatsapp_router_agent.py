@@ -1181,7 +1181,7 @@ class WhatsappRouterAgent:
     def _render_recolha_carrinhas(self, pedido: Pedido, carrinhas: list[PedidoContentor]) -> str:
         horarios = ", ".join(
             self._unique_sorted(
-                item.horario_agendado or "sem horario"
+                item.horario_agendado or "sem horário"
                 for item in carrinhas
             )
         )
@@ -1216,7 +1216,7 @@ class WhatsappRouterAgent:
                     link = f" | Cobrar: {whatsapp_link(pedido.telefone_cliente)}" if pedido.telefone_cliente else ""
                     linhas.append(f"- #{pedido.id} {pedido.nome_cliente}: {self._money(pedido.valor_global)}{link}")
             if itens["cargas"]:
-                linhas.append("Divergencias de residuo:")
+                linhas.append("Divergências de resíduo:")
                 for item in itens["cargas"]:
                     linhas.append(
                         f"- {self._painel_v32_equipamento(item)} | {item.pedido.nome_cliente}: "
@@ -1230,7 +1230,7 @@ class WhatsappRouterAgent:
                     f"- {self._painel_v32_equipamento(item)} | {item.pedido.nome_cliente}: "
                     f"{item.relato_avaria or 'sem relato'} | resolver avaria {item.id}"
                 )
-        return "\n".join(linhas) if linhas else "Nenhuma pendencia ativa."
+        return "\n".join(linhas) if linhas else "Nenhuma pendência ativa."
 
     def _painel_v32_financeiro(self, pedidos: list[Pedido], today) -> str:
         totais = {
@@ -1548,7 +1548,7 @@ class WhatsappRouterAgent:
             linhas.extend(
                 [self._format_pendencia_financeira(aluguer) for aluguer in pendencias_financeiras]
                 if pendencias_financeiras
-                else ["Nenhuma pendencia financeira."]
+                else ["Nenhuma pendência financeira."]
             )
         else:
             linhas.append("💸 Pendencias financeiras: ocultas para este perfil.")
@@ -1556,14 +1556,14 @@ class WhatsappRouterAgent:
         linhas.extend(
             [self._format_pendencia_carga(aluguer) for aluguer in pendencias_carga]
             if pendencias_carga
-            else ["Nenhuma pendencia de carga."]
+            else ["Nenhuma pendência de carga."]
         )
         if self._avarias_enabled():
             linhas.append(f"🛠️ Pendencias de avarias: {len(pendencias_avaria)}")
             linhas.extend(
                 [self._format_pendencia_avaria(aluguer) for aluguer in pendencias_avaria]
                 if pendencias_avaria
-                else ["Nenhuma pendencia de avaria."]
+                else ["Nenhuma pendência de avaria."]
             )
         return linhas
 

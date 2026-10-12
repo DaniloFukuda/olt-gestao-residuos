@@ -1887,7 +1887,7 @@ def test_adapter_prompt_confirmacao_preserva_consultas_contexto_e_commit(db_sess
 
     assert response == (
         "Confirme a entrega preparada:\n\nCliente: Cliente\nPedido: #17\n"
-        "Quantidade de ativos: 1\n1. 📦 Contentor 5 | identificação: 101 | fotos: 1\n"
+        "Quantidade de ativos: 1\n• 📦 Contentor nº 101 | fotos: 1\n"
         "Ponto de referência: sem referência\nPagamento: pago\n\n"
         "1. ✅ Confirmar entrega\n2. ❌ Cancelar"
     )

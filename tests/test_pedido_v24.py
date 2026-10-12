@@ -103,7 +103,7 @@ def test_despejo_v24_mensagem_e_persistencia_usam_mesma_regra_de_divergencia(
     confirmacao = agent._despejo_confirmacao_prompt(ctx)
     agent._confirmar_despejo_atual(SimpleNamespace(telefone="operador"), ctx)
 
-    assert f"Divergencia: {'Sim' if esperado else 'Nao'}" in confirmacao
+    assert f"Divergência: {'Sim' if esperado else 'Não'}" in confirmacao
     assert agent.service.confirmar_despejo.call_args.args[2] is esperado
 
 
@@ -1640,7 +1640,7 @@ def test_recolha_v24_confirma_todos_ativos_do_pedido_em_loop(db_session, monkeyp
     assert "Contentor 81" not in segundo_prompt
     assert "Contentor 82" in segundo_prompt
     assert "Contentor 82" in segundo_foto
-    assert "Recolha do pedido concluida" in final
+    assert "Recolha do pedido concluída" in final
     assert router.pop_pending_messages() == [MAIN_MENU]
     assert all(item.status_recolha == StatusRecolhaPedido.RECOLHIDO.value for item in pedido.contentores)
     fotos_recolha = (
@@ -1692,7 +1692,7 @@ def test_recolha_v24_termino_parcial_mantem_restante_pendente_e_menu_separado(db
     db_session.refresh(pedido.contentores[0])
     db_session.refresh(pedido.contentores[1])
     conversa = db_session.query(ConversaWhatsApp).one()
-    assert "Terminar recolhas deste cliente" in ativos
+    assert "Terminar recolhas" in ativos
     assert "Contentor 92" in restantes
     assert "encerradas" in response
     assert pedido.contentores[0].status_recolha == StatusRecolhaPedido.RECOLHIDO.value
@@ -1837,7 +1837,7 @@ def test_recolha_v24_avaria_exige_relato_curto_rejeita_e_valido_cria_pendencia(d
     db_session.refresh(pedido.contentores[0])
     assert "pelo menos 10" in curto
     assert "Relato: porta lateral amassada" in confirmacao
-    assert "pendencia de avaria" in final
+    assert "pendência de avaria" in final
     assert pedido.contentores[0].contentor_avariado is True
     assert pedido.contentores[0].relato_avaria == "porta lateral amassada"
     assert pedido.contentores[0].status_resolucao_avaria == StatusResolucaoPedido.PENDENTE.value
@@ -2107,6 +2107,8 @@ def test_despejo_v24_loop_confirma_um_ativo_e_mostra_restantes_sem_novo_cliente(
     assert "Contentor 201" in foto_prompt
     assert "Fotos: 2" in confirmacao
     assert "Contentor 202" in restantes
+    assert "Resta 1 contentor pendente neste pedido." in restantes
+    assert restantes.count("Selecione") == 1
     assert pedido.contentores[0].status_ciclo == StatusCicloPedido.CONCLUIDO.value
     assert pedido.contentores[1].status_ciclo == StatusCicloPedido.EM_ANDAMENTO.value
     assert pedido.contentores[0].despejo_feito_por == "351900009900"
@@ -2241,7 +2243,7 @@ def test_despejo_v24_cota_esgotada_entre_escolha_e_confirmacao_nao_salva(db_sess
 
     db_session.refresh(pedido.contentores[0])
     db_session.refresh(pedido.contentores[1])
-    assert "Residuo efetivo: Entulho Limpo" in confirmacao
+    assert "Resíduo efetivo: Entulho Limpo" in confirmacao
     assert "Não existe cota em aberto" in response
     assert pedido.contentores[0].status_ciclo == StatusCicloPedido.EM_ANDAMENTO.value
     assert pedido.contentores[0].despejo_data_hora is None
@@ -2512,8 +2514,8 @@ def test_despejo_v24_divergencia_valida_cria_pendencia_e_rejeita_relato_curto(db
     assert "pelo menos 10" in curto
     assert "Envie a foto" in foto
     assert "Confirmar despejo" in confirmacao
-    assert "Residuo efetivo: Entulho Misto" in confirmacao
-    assert "Divergencia: Sim" in confirmacao
+    assert "Resíduo efetivo: Entulho Misto" in confirmacao
+    assert "Divergência: Sim" in confirmacao
     assert "processado no vazadouro" in final
     # Grava o resíduo que caiu de fato, mesmo sem cota de Misto no pedido.
     assert pedido.contentores[0].residuo_efetivo_vazadouro == "Entulho Misto"
@@ -2742,7 +2744,7 @@ def test_resumo_v32_funcionario_oculta_comercial_financeiro_pagamentos_e_carga(d
     assert "1. VENCEM AMANHA" not in response
     assert "5. RESUMO FINANCEIRO" not in response
     assert "Pagamentos pendentes" not in response
-    assert "Divergencias de residuo" not in response
+    assert "Divergências de resíduo" not in response
     assert "valor" not in response.lower()
     assert "EUR" not in response
     assert "Avarias em Equipamentos" in response
@@ -3188,7 +3190,7 @@ def test_despejo_v24_contentores_trocados_no_pedido_nao_sao_divergencia(db_sessi
     primeiro = router.handle(msg("1"))
 
     assert "Envie a foto do despejo" in foto
-    assert "Divergencia: Nao" in confirmacao
+    assert "Divergência: Não" in confirmacao
     assert "processado no vazadouro" in primeiro
     db_session.refresh(limpo)
     assert limpo.residuo_efetivo_vazadouro == "Entulho Misto"
@@ -3266,7 +3268,7 @@ def test_despejo_v24_residuo_igual_ao_contratado_segue_sem_relato(db_session, mo
     confirmacao = router.handle(msg("2"))
 
     assert "Envie a foto do despejo" in foto
-    assert "Divergencia: Nao" in confirmacao
+    assert "Divergência: Não" in confirmacao
 
 
 @pytest.mark.parametrize("palavra", ["entrega", "entregar", "confirmar entrega"])

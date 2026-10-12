@@ -387,6 +387,9 @@ def _corrigir_pedido_options(body: str) -> list[dict[str, str]]:
     id_by_title = {
         "quantidade de carrinhas": "quantidade",
         "quantidade de contentores": "quantidade",
+        "numero de carrinhas": "quantidade",
+        "numero de contentores": "quantidade",
+        "pessoal para carregar": "mao_de_obra",
         "nome do cliente": "nome_cliente",
         "telefone": "telefone",
         "dia da entrega": "data_entrega",
@@ -528,19 +531,43 @@ def _buttons_from_options(options: list[dict[str, str]]) -> list[dict[str, str]]
     return buttons
 
 
+_SEPARADOR_TITULO = re.compile(r"\s+[-•]\s+")
+
+
+def _dividir_titulo(title: str) -> tuple[str, str | None]:
+    """Título longo "#1 - Obra Alfa - 📦 2 Contentores" vira título + descrição.
+
+    As partes separadas por " - " ou " • " entram no título enquanto cabem
+    em 24 caracteres; o resto vai para a descrição. Sem separador útil, o
+    título é cortado e a descrição leva o texto inteiro.
+    """
+    clean = _clean_option_title(title)
+    if len(clean) <= MAX_LIST_TITLE_CHARS:
+        return clean, None
+    partes = _SEPARADOR_TITULO.split(clean)
+    separadores = _SEPARADOR_TITULO.findall(clean)
+    titulo, indice = partes[0], 1
+    while indice < len(partes) and len(titulo + separadores[indice - 1] + partes[indice]) <= MAX_LIST_TITLE_CHARS:
+        titulo += separadores[indice - 1] + partes[indice]
+        indice += 1
+    if indice < 2 or indice == len(partes):
+        return _truncate_title(clean, MAX_LIST_TITLE_CHARS), clean
+    return titulo, " • ".join(partes[indice:])
+
+
 def _list_rows_from_options(options: list[dict[str, str]]) -> list[dict[str, str]]:
     rows = []
     for option in options:
+        description = option.get("description")
         if option.get("preserve_title"):
             row_title = _clean_option_title(option["title"])
-        else:
+        elif description:
             row_title = _truncate_title(option["title"], MAX_LIST_TITLE_CHARS)
+        else:
+            row_title, description = _dividir_titulo(option["title"])
         if not row_title:
             return []
         row = {"id": option["id"], "title": row_title}
-        description = option.get("description")
-        if not description and row_title != _clean_option_title(option["title"]):
-            description = _clean_option_title(option["title"])
         if description:
             row["description"] = _truncate_title(description, MAX_LIST_DESCRIPTION_CHARS)
         rows.append(row)

@@ -985,23 +985,20 @@ class PedidoV24Agent:
                 contentor.tipo_equipamento == TipoEquipamentoPedido.CARRINHA.value
             )
             if pendentes:
+                restantes = self._restam_pendentes(len(pendentes), is_carrinha)
                 if is_carrinha:
                     mensagem_processado = (
-                        f"✅ Despejo da {label} processado no vazadouro.\n"
-                        f"Restam {len(pendentes)} carrinhas pendentes neste pedido.\n\n"
+                        f"✅ Despejo da {label} processado no vazadouro.\n{restantes}\n\n"
                     )
                 else:
                     mensagem_processado = (
-                        f"✅ {label} processado no vazadouro.\n"
-                        f"Restam {len(pendentes)} contentores pendentes neste pedido.\n\n"
+                        f"✅ {label} processado no vazadouro.\n{restantes}\n\n"
                     )
                 response = self._advance_sem_commit(
                     conversa,
                     "v24_despejo_ativo",
                     ctx,
-                    mensagem_processado
-                    + "Selecione a proxima unidade deste cliente:\n\n"
-                    + self._despejo_selecao_prompt(ctx, pendentes),
+                    mensagem_processado + self._despejo_selecao_prompt(ctx, pendentes),
                 )
             else:
                 pedido = self.service.get(ctx["pedido_id"])
@@ -1046,7 +1043,10 @@ class PedidoV24Agent:
         return self._selected_id(raw, ctx.get("contentores") or [])
 
     def _is_despejo_terminar(self, message, choice, ctx) -> bool:
-        if choice in {"terminar", "terminar despejos deste cliente", "🏁 terminar despejos deste cliente"}:
+        if choice in {
+            "terminar", "terminar despejos", "🏁 terminar despejos",
+            "terminar despejos deste cliente", "🏁 terminar despejos deste cliente",
+        }:
             return True
         if not choice.isdigit() or int(choice) != ctx.get("terminar_indice"):
             return False
@@ -1310,7 +1310,8 @@ class PedidoV24Agent:
     def _despejo_foto_prompt(self, ctx) -> str:
         contentor = self.db.get(PedidoContentor, ctx["contentor_id"])
         label = self._equipamento_label(contentor) if contentor else "equipamento"
-        return f"Envie a foto do despejo do {label} no vazadouro."
+        artigo = "da" if contentor and contentor.tipo_equipamento == TipoEquipamentoPedido.CARRINHA.value else "do"
+        return f"Envie a foto do despejo {artigo} {label} no vazadouro."
 
     def _despejo_conformidade_prompt(self, ctx) -> str:
         contentor = self.db.get(PedidoContentor, ctx["contentor_id"])
@@ -1363,21 +1364,28 @@ class PedidoV24Agent:
             f"Cliente: {pedido.nome_cliente if pedido else ctx.get('pedido_id')}",
             f"Ativo: {label}",
             f"Fotos: {len(ctx.get('fotos_despejo') or [])}",
-            f"Residuo contratado: {ctx.get('residuo_contratado')}",
-            f"Residuo efetivo: {ctx.get('residuo_efetivo')}",
-            f"Divergencia: {'Sim' if tem_divergencia else 'Nao'}",
+            f"Resíduo contratado: {ctx.get('residuo_contratado')}",
+            f"Resíduo efetivo: {ctx.get('residuo_efetivo')}",
+            f"Divergência: {'Sim' if tem_divergencia else 'Não'}",
         ]
         if ctx.get("carga_errada"):
             linhas.append(f"Relato: {ctx.get('relato_carga')}")
         linhas.extend(["", "1. ✅ Confirmar despejo", "2. ↩️ Voltar", "3. ❌ Cancelar"])
         return "\n".join(linhas)
 
+    @staticmethod
+    def _restam_pendentes(quantidade: int, carrinha: bool) -> str:
+        if quantidade == 1:
+            return f"Resta 1 {'carrinha pendente' if carrinha else 'contentor pendente'} neste pedido."
+        return f"Restam {quantidade} {'carrinhas pendentes' if carrinha else 'contentores pendentes'} neste pedido."
+
     def _despejo_selecao_prompt(self, ctx, pendentes) -> str:
         ctx["contentores"] = [item.id for item in pendentes]
         ctx["terminar_indice"] = len(pendentes) + 1
         linhas = ["Selecione o ativo descarregado:"]
         linhas.extend(f"{index}. {self._equipamento_label(item)}" for index, item in enumerate(pendentes, 1))
-        linhas.append(f"{ctx['terminar_indice']}. 🏁 Terminar despejos deste cliente")
+        # Título curto: a lista do WhatsApp corta acima de 24 caracteres.
+        linhas.append(f"{ctx['terminar_indice']}. 🏁 Terminar despejos")
         return "\n".join(linhas)
 
     def _despejo_pendentes_por_pedido(self, pedido_id: int):
@@ -1500,15 +1508,15 @@ class PedidoV24Agent:
 
         if "pedido_id" not in ctx:
             if avariado:
-                return self._idle(conversa, "✅ Recolha registrada com pendencia de avaria.")
+                return self._idle(conversa, "✅ Recolha registrada com pendência de avaria.")
             return self._idle(conversa, "✅ Recolha registrada. O contentor aguarda despejo.")
 
         pendentes = self._recolha_pendentes_por_pedido(ctx["pedido_id"])
         if pendentes:
             mensagem_continuidade = (
-                "Ativo com partida registrada. Escolha o proximo ou termine as partidas deste cliente.\n\n"
+                "Ativo com partida registrada. Escolha o próximo ou termine as partidas deste cliente.\n\n"
                 if is_carrinha
-                else "Ativo recolhido. Escolha o proximo ou termine as recolhas deste cliente.\n\n"
+                else "Ativo recolhido. Escolha o próximo ou termine as recolhas deste cliente.\n\n"
             )
             return self._advance(
                 conversa,
@@ -1519,8 +1527,8 @@ class PedidoV24Agent:
 
         operacao = "Partida" if is_carrinha else "Recolha"
         if any(item.get("avariado") for item in recolhas):
-            return self._idle(conversa, f"✅ {operacao} do pedido concluida com pendencia de avaria. Ativos aguardam despejo.")
-        return self._idle(conversa, f"✅ {operacao} do pedido concluida. Ativos aguardam despejo.")
+            return self._idle(conversa, f"✅ {operacao} do pedido concluída com pendência de avaria. Ativos aguardam despejo.")
+        return self._idle(conversa, f"✅ {operacao} do pedido concluída. Ativos aguardam despejo.")
 
     def _cancelar_recolha_atual(self, conversa, ctx):
         contentor = self.db.get(PedidoContentor, ctx["contentor_id"])
@@ -1656,7 +1664,10 @@ class PedidoV24Agent:
         return self._cancelar_recolha_atual(conversa, ctx)
 
     def _is_recolha_terminar(self, message, choice, ctx) -> bool:
-        if choice in {"terminar", "terminar recolhas deste cliente", "🏁 terminar recolhas deste cliente"}:
+        if choice in {
+            "terminar", "terminar recolhas", "🏁 terminar recolhas", "terminar partidas", "🏁 terminar partidas",
+            "terminar recolhas deste cliente", "🏁 terminar recolhas deste cliente",
+        }:
             return True
         if not choice.isdigit() or int(choice) != ctx.get("terminar_indice"):
             return False
@@ -1708,7 +1719,7 @@ class PedidoV24Agent:
             f"Fotos: {len(ctx.get('fotos_recolha') or [])}",
         ]
         if get_settings().feature_avarias_enabled:
-            avaria = "Sim" if ctx.get("avariado") else "Nao"
+            avaria = "Sim" if ctx.get("avariado") else "Não"
             linhas.append(f"Avaria: {avaria}")
             if ctx.get("avariado"):
                 linhas.append(f"Relato: {ctx.get('relato_avaria')}")
@@ -1726,7 +1737,7 @@ class PedidoV24Agent:
         linhas = [f"Selecione o ativo para a {operacao}:"]
         linhas.extend(f"{index}. {self._equipamento_label(item)}" for index, item in enumerate(pendentes, 1))
         linhas.append(
-            f"{ctx['terminar_indice']}. 🏁 Terminar {operacao}s deste cliente"
+            f"{ctx['terminar_indice']}. 🏁 Terminar {operacao}s"
         )
         return "\n".join(linhas)
 
@@ -2055,15 +2066,18 @@ class PedidoV24Agent:
             f"Pedido: #{ctx['pedido_id']}",
             f"Quantidade de ativos: {len(entregas)}",
         ]
-        for index, entrega in enumerate(entregas, 1):
+        for entrega in entregas:
+            # Antes: "📦 Contentor 1 | identificação: 3" misturava o número
+            # interno do item com o número real do contentor.
             contentor = self.db.get(PedidoContentor, entrega["contentor_id"])
-            label = self._equipamento_label(contentor) if contentor else f"Ativo #{entrega['contentor_id']}"
-            numero = entrega.get("numero_adesivo") or "sem identificação"
-            if contentor and contentor.tipo_equipamento == TipoEquipamentoPedido.CARRINHA.value and numero == "0":
-                numero = "sem frota"
-            linhas.append(
-                f"{index}. {label} | identificação: {numero} | fotos: {len(entrega.get('fotos') or [])}"
-            )
+            numero = entrega.get("numero_adesivo") or "sem número"
+            fotos = len(entrega.get("fotos") or [])
+            if contentor and contentor.tipo_equipamento == TipoEquipamentoPedido.CARRINHA.value:
+                frota = "sem frota" if numero == "0" else numero
+                horario = contentor.horario_agendado or "sem horário"
+                linhas.append(f"• 🚛 Carrinha ({horario}) | frota: {frota} | fotos: {fotos}")
+            else:
+                linhas.append(f"• 📦 Contentor nº {numero} | fotos: {fotos}")
         referencia = ctx.get("referencia_entrega") or "sem referência"
         pagamento = "pendente" if pedido and pedido.status_pagamento == StatusPagamento.PENDENTE.value else "pago"
         linhas.extend(
@@ -2214,12 +2228,13 @@ class PedidoV24Agent:
         # e a hora da chegada são corrigidos juntos (dia → hora).
         is_carrinha = ctx.get("tipo_solicitacao") == TipoEquipamentoPedido.CARRINHA.value
         return [
-            ("quantidade", "Quantidade de carrinhas" if is_carrinha else "Quantidade de contentores"),
+            # Títulos com até 24 caracteres, o limite da linha de lista.
+            ("quantidade", "Número de carrinhas" if is_carrinha else "Número de contentores"),
             ("nome_cliente", "Nome do cliente"),
             ("telefone", "Telefone"),
             ("data_entrega", "Dia e hora da chegada" if is_carrinha else "Dia da entrega"),
             ("tipo_residuo", "Tipo de resíduo"),
-            ("mao_de_obra", "Pessoal para carregamento"),
+            ("mao_de_obra", "Pessoal para carregar"),
             ("valor_total", "Valor total"),
             ("status_pagamento", "Pagamento"),
             ("endereco", "Endereço"),
@@ -2236,6 +2251,9 @@ class PedidoV24Agent:
             return fields[index] if 0 <= index < len(fields) else None
         return {
             "quantidade": "quantidade",
+            "numero de contentores": "quantidade",
+            "numero de carrinhas": "quantidade",
+            "pessoal para carregar": "mao_de_obra",
             "nome do cliente": "nome_cliente",
             "telefone": "telefone",
             "dia da entrega": "data_entrega",
@@ -2495,7 +2513,7 @@ class PedidoV24Agent:
 
     def _equipamento_label(self, contentor: PedidoContentor) -> str:
         if contentor.tipo_equipamento == TipoEquipamentoPedido.CARRINHA.value:
-            horario = contentor.horario_agendado or "sem horario"
+            horario = contentor.horario_agendado or "sem horário"
             frota = contentor.frota_carrinha
             detalhe = f"frota {frota}" if frota else horario
             return f"🚛 Carrinha ({detalhe})"

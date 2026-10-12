@@ -374,3 +374,59 @@ def test_corrigir_residuo_das_carrinhas(db_session, monkeypatch):
 
     contexto = estado(db_session).contexto_json
     assert [item["residuo_contratado"] for item in contexto["itens"]] == ["Entulho Limpo", "Entulho Misto"]
+
+
+# --- Títulos de lista sem cortes (limite de 24 caracteres) ----------------
+
+
+def _titulos(resultado):
+    linhas = []
+    for parte in [resultado, *(resultado.get("additional_messages") or [])]:
+        linhas.extend(parte.get("buttons") or parte.get("list_rows") or [])
+    return [linha["title"] for linha in linhas]
+
+
+def test_corrigir_nao_corta_titulos(db_session, monkeypatch):
+    liberar_operadores(monkeypatch)
+    router = WhatsappRouterAgent(db_session)
+    _resumo_contentores(router, ["Entulho Limpo"])
+
+    titulos = _titulos(render(router.handle(toque("option_2"))))
+
+    assert titulos[0] == "Número de contentores"
+    assert "Pessoal para carregar" in titulos
+    assert all(len(t) <= 24 and not t.endswith("...") for t in titulos), titulos
+
+
+def test_titulo_longo_divide_em_titulo_e_descricao():
+    resultado = render(
+        "Selecione o pedido para despejo no vazadouro:\n\n"
+        "1. #1 - Obra Alfa - 📦 2 Contentores\n"
+        "2. #2 - Obra Beta - 🚛 2 Carrinhas\n"
+        "3. #3 - Construtora Exemplo Lda - 📦 1 Contentor"
+    )
+
+    linhas = resultado["list_rows"]
+    assert linhas[0] == {"id": "option_1", "title": "#1 - Obra Alfa", "description": "📦 2 Contentores"}
+    # Sem como dividir dentro de 24 caracteres: corta e mostra tudo na descrição.
+    assert linhas[2]["title"].endswith("...")
+    assert linhas[2]["description"] == "#3 - Construtora Exemplo Lda - 📦 1 Contentor"
+
+
+def test_terminar_cabe_no_titulo_e_aceita_texto_curto(db_session, monkeypatch):
+    liberar_operadores(monkeypatch)
+    service = PedidoService(db_session)
+    pedido = _pedido(service, residuos=("Entulho Limpo", "Entulho Misto"))
+    service.confirmar_entrega_lote(
+        pedido.id, "motorista", 38.7, -9.1, None,
+        [
+            {"contentor_id": pedido.contentores[0].id, "numero_adesivo": "11", "fotos": ["f1"]},
+            {"contentor_id": pedido.contentores[1].id, "numero_adesivo": "12", "fotos": ["f2"]},
+        ],
+    )
+    router = WhatsappRouterAgent(db_session)
+    router.handle(msg("3"))
+
+    ativos = router.handle(msg("1"))
+    assert "🏁 Terminar recolhas" in _titulos(render(ativos))
+    assert "encerradas" in router.handle(msg("Terminar recolhas"))
