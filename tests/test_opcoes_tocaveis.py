@@ -10,6 +10,7 @@ from app.agents.pedido_v24 import opcoes
 from app.agents.whatsapp_router_agent import WhatsappRouterAgent
 from app.integrations.whatsapp.client import send_whatsapp_message
 from app.models.contentor import Contentor, StatusContentor
+from app.models.operador import PerfilOperador
 from app.models.conversa import ConversaWhatsApp
 from app.services.pedido_service import PedidoService
 from app.services.seed_service import SeedService
@@ -479,3 +480,18 @@ def test_painel_do_motorista_nao_tem_acoes_rapidas(db_session, monkeypatch):
 
     assert "Ações rápidas" in router.handle(msg("5"))
     assert "Ações rápidas" not in router.handle(msg("5", phone="351900009901"))
+
+
+def test_acoes_rapidas_nao_repetem_comando_de_ids_que_colidem(db_session, monkeypatch):
+    from types import SimpleNamespace
+
+    liberar_operadores(monkeypatch)
+    router = WhatsappRouterAgent(db_session)
+    monkeypatch.setattr(router, "_avarias_ativas", lambda _p: [SimpleNamespace()])
+    monkeypatch.setattr(router, "_alugueres_avarias_ativas", lambda _a: [SimpleNamespace()])
+    monkeypatch.setattr(router, "_acao_rapida_avaria", lambda _i: "🛠️ Avaria Nº 3 • A — envie: resolver avaria 1")
+    monkeypatch.setattr(router, "_acao_rapida_avaria_aluguer", lambda _a: "🛠️ Avaria Nº 9 • B — envie: resolver avaria 1")
+
+    acoes = router._painel_v4_acoes_rapidas([], [], PerfilOperador.GESTOR)
+
+    assert acoes == ["🛠️ Avaria Nº 3 • A — envie: resolver avaria 1"]

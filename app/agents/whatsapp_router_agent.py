@@ -594,7 +594,16 @@ class WhatsappRouterAgent:
             )
         if perfil == PerfilOperador.GESTOR:
             acoes.extend(self._acao_rapida_carga(item) for item in self._cargas_divergentes(pedidos))
-        return acoes
+        # IDs de pedido_contentores e alugueres_contentor podem colidir; a Meta
+        # recusa linhas com o mesmo id, e o comando repetido abriria a mesma
+        # revisão. Fica a primeira.
+        unicas, comandos = [], set()
+        for acao in acoes:
+            comando = acao.rsplit(" — envie: ", 1)[-1]
+            if comando not in comandos:
+                comandos.add(comando)
+                unicas.append(acao)
+        return unicas
 
     def _acao_rapida_avaria(self, item: PedidoContentor) -> str:
         return (
