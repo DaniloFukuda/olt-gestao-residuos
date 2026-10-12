@@ -3413,6 +3413,23 @@ def test_nao_continuar_retoma_cadastro_legado_com_pergunta(db_session, monkeypat
     assert db_session.query(ConversaWhatsApp).one().estado_atual == "aguardando_nome_cliente"
 
 
+def test_nao_continuar_reenvia_a_ultima_pergunta_do_pedido(db_session, monkeypatch):
+    liberar_operadores(monkeypatch)
+    router = WhatsappRouterAgent(db_session)
+    for texto in ["1", "1", "Cliente Retoma", "912345678"]:
+        pergunta = router.handle(msg(texto))
+    router.handle(msg("abc"))  # resposta inválida não substitui a pergunta
+
+    router.handle(msg("cancelar"))
+    response = router.handle(msg("2"))
+
+    assert response.startswith("↩️ Operação retomada.")
+    assert pergunta in response
+    assert db_session.query(ConversaWhatsApp).one().estado_atual == "v24_cadastro_quantidade"
+    router.handle(msg("cancelar"))
+    assert router.handle(msg("2")).count("Operação retomada") == 1
+
+
 def test_proximo_passo_depois_de_outra_foto_avanca_sem_nova_imagem(db_session, monkeypatch):
     liberar_operadores(monkeypatch)
     service = PedidoService(db_session)

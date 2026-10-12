@@ -1,6 +1,7 @@
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+import json
 import re
 from urllib.parse import quote
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -157,6 +158,49 @@ class WhatsappRouterAgent:
         return self.pedido_v24_router.backend
 
     def handle(self, message: NormalizedWhatsAppMessage) -> str:
+        antes = self._estado_conversa(message.telefone)
+        resposta = self._handle(message)
+        self._lembrar_pergunta(message.telefone, antes, resposta)
+        return resposta
+
+    def _estado_conversa(self, telefone: str):
+        conversa = (
+            self.db.query(ConversaWhatsApp)
+            .filter(ConversaWhatsApp.telefone == telefone)
+            .first()
+        )
+        if not conversa:
+            return None
+        return conversa.estado_atual, json.dumps(conversa.contexto_json or {}, sort_keys=True, default=str)
+
+    def _lembrar_pergunta(self, telefone: str, antes, resposta) -> None:
+        """Guarda a pergunta em curso para reenviá-la em "Não, continuar".
+
+        Só guarda quando a mensagem fez o fluxo avançar: uma resposta de erro
+        ("Selecione uma das opções") não substitui a pergunta com as opções.
+        """
+        conversa = (
+            self.db.query(ConversaWhatsApp)
+            .filter(ConversaWhatsApp.telefone == telefone)
+            .first()
+        )
+        if not conversa or (antes and antes[0] == CONFIRMAR_CANCELAMENTO_STATE):
+            return
+        if conversa.estado_atual == CONFIRMAR_CANCELAMENTO_STATE:
+            return
+        if conversa.estado_atual == "idle":
+            if conversa.ultima_pergunta is not None:
+                conversa.ultima_pergunta = None
+                self.db.commit()
+            return
+        if not isinstance(resposta, str) or not resposta.strip():
+            return
+        depois = self._estado_conversa(telefone)
+        if depois != antes or not conversa.ultima_pergunta:
+            conversa.ultima_pergunta = resposta
+            self.db.commit()
+
+    def _handle(self, message: NormalizedWhatsAppMessage) -> str:
         self._pending_messages = []
         text = (message.texto or "").strip().lower()
         decisao = self.operador_service.decidir_acesso(message.telefone)
@@ -2065,6 +2109,8 @@ class WhatsappRouterAgent:
         self.db.commit()
         if estado_anterior in AluguerAgent.ACTIVE_STATES:
             return "↩️ Operação retomada. " + self._prompt_for_state(estado_anterior)
+        if conversa.ultima_pergunta:
+            return "↩️ Operação retomada.\n\n" + conversa.ultima_pergunta
         return "↩️ Operação retomada. Responda à última pergunta para continuar."
 
     def _has_active_flow(self, conversa: ConversaWhatsApp) -> bool:

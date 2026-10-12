@@ -379,8 +379,14 @@ def test_operacao_completa_de_22_pedidos_pelo_whatsapp(
             # Cancelamento pedido por engano e desistido no meio do cadastro.
             g.comando("1")
             g.tocar("Contentor")
+            g.digitar("Cliente Desistente")
+            g.digitar("912000999")
             assert "Deseja cancelar" in g.comando("voltar")
-            assert "Operação retomada" in g.tocar("Não, continuar")
+            retomada = g.tocar("Não, continuar")
+            # A pergunta volta com as opções tocáveis, não só "responda à
+            # última pergunta".
+            assert "Operação retomada" in retomada and "Quantos contentores" in retomada
+            g.tocar("2 contentores")
             g.comando("cancelar")
             assert "Operação cancelada" in g.tocar("Sim, cancelar")
         cadastrar(g, pedido)
