@@ -176,8 +176,9 @@ class WhatsappRouterAgent:
     def _lembrar_pergunta(self, telefone: str, antes, resposta) -> None:
         """Guarda a pergunta em curso para reenviá-la em "Não, continuar".
 
-        Só guarda quando a mensagem fez o fluxo avançar: uma resposta de erro
-        ("Selecione uma das opções") não substitui a pergunta com as opções.
+        Só guarda quando a mensagem mudou o estado ou o contexto: uma resposta
+        de erro ("Selecione uma das opções") ou de acesso negado não substitui
+        a pergunta com as opções nem toca na conversa.
         """
         conversa = (
             self.db.query(ConversaWhatsApp)
@@ -195,8 +196,7 @@ class WhatsappRouterAgent:
             return
         if not isinstance(resposta, str) or not resposta.strip():
             return
-        depois = self._estado_conversa(telefone)
-        if depois != antes or not conversa.ultima_pergunta:
+        if self._estado_conversa(telefone) != antes:
             conversa.ultima_pergunta = resposta
             self.db.commit()
 
