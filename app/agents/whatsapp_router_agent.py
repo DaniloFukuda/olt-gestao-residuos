@@ -568,9 +568,52 @@ class WhatsappRouterAgent:
         ]
         if perfil == PerfilOperador.GESTOR:
             linhas.extend(["", self._painel_v4_financeiro(pedidos, alugueres, today)])
-            if self.pedido_service.pedidos_pagamento_pendente():
-                linhas.extend(["", "💶 Registrar pagamento pendente"])
+        acoes = self._painel_v4_acoes_rapidas(pedidos, alugueres, perfil)
+        if acoes:
+            linhas.extend(["", "⚡ *Ações rápidas* (toque para abrir):"])
+            linhas.extend(f"{indice}. {acao}" for indice, acao in enumerate(acoes, 1))
         return "\n".join(linhas)
+
+    def _painel_v4_acoes_rapidas(self, pedidos, alugueres, perfil: PerfilOperador) -> list[str]:
+        """Comandos do painel como opções tocáveis (antes: digitar "resolver avaria N").
+
+        Cada linha termina com " — envie: comando"; o cliente WhatsApp usa o
+        comando como id da linha da lista, e o toque chega ao roteador como se
+        tivesse sido digitado.
+        """
+        acoes = []
+        if perfil == PerfilOperador.GESTOR and self.pedido_service.pedidos_pagamento_pendente():
+            acoes.append("💶 Registrar pagamento — envie: registrar pagamento")
+        if not self._can_execute_command(perfil, COMMAND_FAMILY_RESOLUTION):
+            return acoes
+        if self._avarias_enabled():
+            acoes.extend(self._acao_rapida_avaria(item) for item in self._avarias_ativas(pedidos))
+            acoes.extend(
+                self._acao_rapida_avaria_aluguer(aluguer)
+                for aluguer in self._alugueres_avarias_ativas(alugueres)
+            )
+        if perfil == PerfilOperador.GESTOR:
+            acoes.extend(self._acao_rapida_carga(item) for item in self._cargas_divergentes(pedidos))
+        return acoes
+
+    def _acao_rapida_avaria(self, item: PedidoContentor) -> str:
+        return (
+            f"🛠️ Avaria Nº {self._equipamento_numero(item)} • {item.pedido.nome_cliente}"
+            f" — envie: resolver avaria {item.id}"
+        )
+
+    @staticmethod
+    def _acao_rapida_avaria_aluguer(aluguer: AluguerContentor) -> str:
+        return (
+            f"🛠️ Avaria Nº {aluguer.numero_contentor} • {aluguer.nome_cliente}"
+            f" — envie: resolver avaria {aluguer.id}"
+        )
+
+    def _acao_rapida_carga(self, item: PedidoContentor) -> str:
+        return (
+            f"⚖️ Carga Nº {self._numero_equipamento_pedido(item)} • {item.pedido.nome_cliente}"
+            f" — envie: resolver carga {item.id}"
+        )
 
     def _painel_v4_acoes_hoje(self, pedidos: list[Pedido], alugueres: list[AluguerContentor], today, perfil: PerfilOperador) -> str:
         settings = get_settings()

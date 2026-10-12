@@ -53,7 +53,7 @@ def send_whatsapp_message(to: str, body: str, force_mock: bool = False) -> dict[
         prefixo = send_text_message(to, corpo, force_mock=force_mock)
         if prefixo.get("status") == "error":
             return prefixo
-        corpo = CORPO_CURTO_OPCOES
+        corpo = _titulo_das_opcoes(corpo)
 
     # Botões não mostram descrição nem títulos acima de 20 caracteres.
     usa_botoes = len(options) <= MAX_BUTTON_OPTIONS and all(
@@ -70,6 +70,14 @@ def send_whatsapp_message(to: str, body: str, force_mock: bool = False) -> dict[
     if prefixo is not None:
         result["previous_message"] = prefixo
     return result
+
+
+def _titulo_das_opcoes(corpo: str) -> str:
+    """Corpo curto da mensagem de opções: a linha que as introduz, se houver."""
+    linhas = [linha.strip() for linha in (corpo or "").splitlines() if linha.strip()]
+    if linhas and linhas[-1].endswith(":") and len(linhas[-1]) <= 200:
+        return linhas[-1]
+    return CORPO_CURTO_OPCOES
 
 
 def _send_list_chunks(
@@ -493,8 +501,17 @@ def _options_from_numbered_options(numbered_options: list[tuple[str, str]]) -> l
         option_title = _clean_option_title(title)
         if not option_title:
             return []
+        comando = _COMANDO_DA_OPCAO.fullmatch(option_title)
+        if comando:
+            # "🛠️ Avaria Nº 3 • Obra Alfa — envie: resolver avaria 1": o toque
+            # envia o comando; em texto, a linha continua a dizer o que enviar.
+            options.append({"id": comando.group("comando"), "title": comando.group("titulo")})
+            continue
         options.append({"id": _option_id(number, option_title), "title": option_title})
     return options
+
+
+_COMANDO_DA_OPCAO = re.compile(r"(?P<titulo>.+?)\s+—\s+envie:\s+(?P<comando>\S.*)")
 
 
 def _option_id(number: str, title: str) -> str:
@@ -550,7 +567,9 @@ def _dividir_titulo(title: str) -> tuple[str, str | None]:
     while indice < len(partes) and len(titulo + separadores[indice - 1] + partes[indice]) <= MAX_LIST_TITLE_CHARS:
         titulo += separadores[indice - 1] + partes[indice]
         indice += 1
-    if indice < 2 or indice == len(partes):
+    # Uma parte só serve de título se disser algo sozinha ("⚖️ Carga Nº 4");
+    # "#12" sem o nome não serve.
+    if indice == len(partes) or len(titulo) > MAX_LIST_TITLE_CHARS or (indice < 2 and len(titulo) < 8):
         return _truncate_title(clean, MAX_LIST_TITLE_CHARS), clean
     return titulo, " • ".join(partes[indice:])
 

@@ -430,3 +430,52 @@ def test_terminar_cabe_no_titulo_e_aceita_texto_curto(db_session, monkeypatch):
     ativos = router.handle(msg("1"))
     assert "🏁 Terminar recolhas" in _titulos(render(ativos))
     assert "encerradas" in router.handle(msg("Terminar recolhas"))
+
+
+# --- Painel: ações rápidas tocáveis para o gestor --------------------------
+
+
+def test_painel_do_gestor_tem_acoes_rapidas_que_enviam_o_comando(db_session, monkeypatch):
+    # Antes, "resolver avaria N", "resolver carga N" e "registrar pagamento"
+    # tinham de ser digitados (ou abertos por um link wa.me que pede para
+    # escolher a conversa).
+    liberar_operadores(monkeypatch)
+    service = PedidoService(db_session)
+    pedido = _pedido(service, residuos=("Entulho Limpo", "Entulho Misto"))
+    pedido.pago = False
+    item_avaria, item_carga = pedido.contentores
+    item_avaria.contentor_avariado = True
+    item_avaria.relato_avaria = "porta empenada"
+    item_avaria.status_resolucao_avaria = "PENDENTE"
+    item_carga.carga_errada = True
+    item_carga.relato_carga = "veio com madeira"
+    item_carga.status_resolucao_carga = "PENDENTE"
+    db_session.commit()
+    router = WhatsappRouterAgent(db_session)
+
+    resultado = render(router.handle(msg("5")))
+
+    linhas = resultado["list_rows"]
+    assert resultado["body"] == "⚡ *Ações rápidas* (toque para abrir):"
+    assert f"resolver avaria {item_avaria.id}" in [linha["id"] for linha in linhas]
+    assert f"resolver carga {item_carga.id}" in [linha["id"] for linha in linhas]
+    assert all(len(linha["title"]) <= 24 for linha in linhas)
+    assert "Revisão de resolução de avaria" in router.handle(toque(f"resolver avaria {item_avaria.id}"))
+
+
+def test_painel_do_motorista_nao_tem_acoes_rapidas(db_session, monkeypatch):
+    from app.models.operador import Operador, PerfilOperador
+
+    liberar_operadores(monkeypatch)
+    db_session.add_all([
+        Operador(telefone_whatsapp="351900009900", nome_operador="Gestor", perfil=PerfilOperador.GESTOR, ativo=True),
+        Operador(telefone_whatsapp="351900009901", nome_operador="Motorista", perfil=PerfilOperador.FUNCIONARIO, ativo=True),
+    ])
+    pedido = _pedido(PedidoService(db_session))
+    pedido.contentores[0].contentor_avariado = True
+    pedido.contentores[0].status_resolucao_avaria = "PENDENTE"
+    db_session.commit()
+    router = WhatsappRouterAgent(db_session)
+
+    assert "Ações rápidas" in router.handle(msg("5"))
+    assert "Ações rápidas" not in router.handle(msg("5", phone="351900009901"))

@@ -102,8 +102,8 @@ def iniciar_ate_confirmacao(router, pedido_id, forma="2"):
 def test_painel_exibe_acao_so_para_gestor_com_pendencia(db_session, operadores):
     criar_pedido(db_session)
     router = WhatsappRouterAgent(db_session)
-    assert "Registrar pagamento pendente" in router.handle(msg("5", GESTOR))
-    assert "Registrar pagamento pendente" not in router.handle(msg("5", FUNCIONARIO))
+    assert "Registrar pagamento — envie: registrar pagamento" in router.handle(msg("5", GESTOR))
+    assert "Registrar pagamento" not in router.handle(msg("5", FUNCIONARIO))
     assert MAIN_MENU.count("Painel de Controle Operacional") == 1
 
 
