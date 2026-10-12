@@ -55,6 +55,7 @@ from app.models.pedido import TipoEquipamentoPedido
 
 FOTO_STATES = {"v24_entrega_foto", "v24_recolha_foto", "v24_despejo_foto"}
 PROXIMO_PASSO_FOTO = {"2", "proximo passo", "➡️ proximo passo"}
+DESPEJO_ANTES_DA_FOTO = {"v24_despejo_residuo", "v24_despejo_conformidade", "v24_despejo_relato"}
 
 
 class PedidoV24OperationalRouter:
@@ -147,12 +148,35 @@ class PedidoV24OperationalRouter:
         conversa: ConversaWhatsApp,
         message: NormalizedWhatsAppMessage,
     ) -> str:
+        estado_antes = getattr(conversa, "estado_atual", None)
         self._avancar_foto_ja_enviada(conversa, message)
         pergunta, message = self._traduzir_opcao(conversa, message)
         if pergunta is not None:
             return pergunta
         resposta = self._handle(conversa, message)
+        resposta = self._manter_fotos_do_despejo(conversa, estado_antes, resposta)
         return self._com_contentores_disponiveis(conversa, resposta)
+
+    def _manter_fotos_do_despejo(self, conversa, estado_antes, resposta):
+        """Depois de "Voltar" na confirmação do despejo, não pede a foto de novo.
+
+        O Voltar serve para refazer o resíduo/conformidade; as fotos já
+        guardadas continuam no contexto. Antes, o motorista tinha de enviar
+        outra foto para chegar outra vez à confirmação.
+        """
+        if estado_antes not in DESPEJO_ANTES_DA_FOTO:
+            return resposta
+        if getattr(conversa, "estado_atual", None) != "v24_despejo_foto":
+            return resposta
+        ctx = dict(getattr(conversa, "contexto_json", None) or {})
+        if not ctx.get("fotos_despejo"):
+            return resposta
+        return self._backend._advance(
+            conversa,
+            "v24_despejo_confirmacao",
+            ctx,
+            self._backend.despejo_confirmacao_prompt(ctx),
+        )
 
     @staticmethod
     def _traduzir_opcao(conversa, message):

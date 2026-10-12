@@ -2292,6 +2292,55 @@ def test_despejo_v24_ultimo_ativo_encerra_fluxo_e_menu_separado(db_session, monk
     assert router.pop_pending_messages() == [MAIN_MENU]
 
 
+@pytest.mark.parametrize("tipo", ["CONTENTOR", "CARRINHA"])
+def test_despejo_v24_voltar_na_confirmacao_mantem_as_fotos(db_session, monkeypatch, tipo):
+    # Teste de UX (12/10/2026): depois de "Voltar" e de refazer a
+    # conformidade, o motorista tinha de enviar outra foto.
+    liberar_operadores(monkeypatch)
+    service = PedidoService(db_session)
+    item = {"tipo_equipamento": tipo, "residuo_contratado": "Entulho Limpo"}
+    if tipo == "CARRINHA":
+        item["horario_agendado"] = "09:00"
+    pedido = service.criar(
+        nome_cliente="Cliente Voltar Despejo",
+        telefone_cliente="351912345678",
+        data_planejada=datetime.now(timezone.utc),
+        valor_global="200",
+        pago=True,
+        forma_pagamento="MBWay",
+        pedido_feito_por="gestor",
+        endereco_aproximado="Rua",
+        ponto_referencia=None,
+        itens=[item],
+    )
+    ativo = pedido.contentores[0]
+    if tipo == "CARRINHA":
+        service.confirmar_chegada_carrinha_lote_transacional(
+            pedido.id, "motorista", 38.7, -9.1, None,
+            [{"contentor_id": ativo.id, "numero_adesivo": "0", "fotos": ["foto-chegada"]}],
+        )
+        service.confirmar_partida_carrinha(ativo.id, "motorista", False, None, ["foto-partida"])
+    else:
+        service.confirmar_entrega_lote(
+            pedido.id, "motorista", 38.7, -9.1, None,
+            [{"contentor_id": ativo.id, "numero_adesivo": "204", "fotos": ["foto-204"]}],
+        )
+        service.confirmar_recolha(ativo.id, "motorista", False, None)
+    router = WhatsappRouterAgent(db_session)
+    for item in ["4", "1", "1", "despejo_conformidade:sim"]:
+        router.handle(msg(item))
+    router.handle(msg(kind="image", media="foto-despejo"))
+    assert "Confirme o despejo" in router.handle(msg("2"))
+
+    router.handle(msg("2"))  # Voltar
+    response = router.handle(msg("despejo_conformidade:sim"))
+
+    conversa = db_session.query(ConversaWhatsApp).one()
+    assert conversa.estado_atual == "v24_despejo_confirmacao"
+    assert "Confirme o despejo" in response and "Fotos: 1" in response
+    assert "concluído" in router.handle(msg("1"))
+
+
 def test_despejo_v24_termino_parcial_preserva_ativos_em_andamento(db_session, monkeypatch):
     liberar_operadores(monkeypatch)
     service = PedidoService(db_session)
