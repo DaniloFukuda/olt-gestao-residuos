@@ -2790,8 +2790,12 @@ def test_resumo_v33_agrupa_pedido_sem_duplicar_ativos_fotos_ou_pendencias(db_ses
     db_session.commit()
 
     response = WhatsappRouterAgent(db_session).handle(msg("resumo", phone=gestor))
+    # As "⚡ Ações rápidas" (12/10/2026) repetem o cliente uma vez por
+    # avaria a resolver; o resto do painel continua sem duplicar.
+    painel, _, acoes = response.partition("⚡ *Ações rápidas*")
 
-    assert response.count("Cliente Sem Duplicar") == 3
+    assert painel.count("Cliente Sem Duplicar") == 3
+    assert acoes.count("Cliente Sem Duplicar") == 1
     assert "44" in response
     assert "45" in response
     assert "45, 45" not in response
