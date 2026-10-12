@@ -1079,11 +1079,14 @@ def test_cadastro_v24_corrigir_cabe_numa_lista_e_edita_quantidade(db_session, mo
 
     prompt = router.handle(msg("1"))
     assert "carrinhas" in prompt.lower()
+    # A carrinha nova pede o seu resíduo antes de voltar ao resumo.
+    assert "Resíduo da carrinha 2/2" in router.handle(msg("2"))
     confirmacao = router.handle(msg("2"))
     conversa = db_session.query(ConversaWhatsApp).one()
 
     assert conversa.estado_atual == "v24_cadastro_confirmacao"
     assert "Quantidade de carrinhas: 2" in confirmacao
+    assert "Tipo de resíduo: Entulho Limpo, Entulho Misto" in confirmacao
     assert "Cliente: Cliente Corrigir" in confirmacao
     assert db_session.query(Pedido).count() == 0
 

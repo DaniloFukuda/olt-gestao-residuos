@@ -251,7 +251,10 @@ class CarrinhaCadastroAgent:
         if field == "quantidade":
             if not raw.isdigit() or not 1 <= int(raw) <= 50:
                 return "Informe uma quantidade entre 1 e 50."
+            anterior = ctx.get("quantidade") or 0
             ctx["quantidade"] = int(raw); self._ajustar_itens_quantidade(ctx)
+            if opcoes.iniciar_residuos_novos(ctx, anterior):
+                return AdvanceTransition("v24_cadastro_edicao_opcao", ctx, opcoes.residuo_edicao_prompt(ctx))
         elif field == "nome_cliente":
             name = (message.contact_name or raw).strip()
             if len(name) < 2: return "Informe o nome completo do cliente."
@@ -278,9 +281,9 @@ class CarrinhaCadastroAgent:
             for item in ctx.get("itens") or []: item["horario_agendado"] = raw
         elif field == "tipo_residuo":
             residue = self._parse_residue(choice)
-            if not residue: return self._residuo_prompt({"residuos": [], "quantidade": 1})
-            ctx["residuos"] = [residue for _ in range(ctx.get("quantidade") or 1)]
-            for item in ctx.get("itens") or []: item["residuo_contratado"] = residue
+            if not residue: return opcoes.residuo_edicao_prompt(ctx)
+            if not opcoes.aplicar_residuo_edicao(ctx, residue):
+                return AdvanceTransition("v24_cadastro_edicao_opcao", ctx, opcoes.residuo_edicao_prompt(ctx))
         elif field == "mao_de_obra":
             value = self._parse_mao_obra(choice)
             if value is None: return self._mao_obra_prompt()

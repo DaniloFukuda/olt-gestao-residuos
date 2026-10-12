@@ -431,8 +431,13 @@ class ContentorCadastroAgent:
         if field == "quantidade":
             if not raw.isdigit() or not 1 <= int(raw) <= 50:
                 return "Informe uma quantidade entre 1 e 50."
+            anterior = ctx.get("quantidade") or 0
             ctx["quantidade"] = int(raw)
             self._ajustar_itens_quantidade(ctx)
+            if opcoes.iniciar_residuos_novos(ctx, anterior):
+                return AdvanceTransition(
+                    "v24_cadastro_edicao_opcao", ctx, opcoes.residuo_edicao_prompt(ctx)
+                )
         elif field == "nome_cliente":
             if message.contact_name:
                 ctx["nome"] = message.contact_name.strip()
@@ -464,12 +469,11 @@ class ContentorCadastroAgent:
         elif field == "tipo_residuo":
             residue = self._parse_residue(choice)
             if not residue:
-                return self._residuo_prompt(
-                    {"residuos": [], "quantidade": 1}
+                return opcoes.residuo_edicao_prompt(ctx)
+            if not opcoes.aplicar_residuo_edicao(ctx, residue):
+                return AdvanceTransition(
+                    "v24_cadastro_edicao_opcao", ctx, opcoes.residuo_edicao_prompt(ctx)
                 )
-            ctx["residuos"] = [residue for _ in range(ctx.get("quantidade") or 1)]
-            for item in ctx.get("itens") or []:
-                item["residuo_contratado"] = residue
         elif field == "mao_de_obra":
             mao_obra = self._parse_mao_obra(choice)
             if mao_obra is None:

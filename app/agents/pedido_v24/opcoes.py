@@ -119,3 +119,55 @@ def traduzir_resposta(estado: str, contexto: dict, texto: str, hoje: date) -> tu
         if numero == len(HORARIOS) + 1:
             return HORARIO_DIGITAR, None
     return None, None
+
+
+# --- Correção do resíduo, equipamento a equipamento -------------------------
+# Antes, "Corrigir → Tipo de resíduo" perguntava só "1/1" e aplicava a mesma
+# resposta a todos os equipamentos. Agora pergunta um a um (mostrando o
+# valor atual) e, quando a quantidade aumenta, pergunta só os novos.
+
+INDICE_RESIDUO_EDICAO = "_residuo_edicao"
+
+
+def residuo_edicao_prompt(contexto: dict) -> str:
+    carrinha = contexto.get("tipo_solicitacao") == "CARRINHA"
+    quantidade = contexto.get("quantidade") or 1
+    indice = contexto.get(INDICE_RESIDUO_EDICAO) or 0
+    residuos = contexto.get("residuos") or []
+    atual = residuos[indice] if indice < len(residuos) and residuos[indice] else None
+    equipamento = "da carrinha" if carrinha else "do contentor"
+    sufixo = f" (atual: {atual})" if atual else ""
+    return (
+        f"Resíduo {equipamento} {indice + 1}/{quantidade}{sufixo}:\n\n"
+        "1. 🟢 Entulho Limpo\n2. 🟠 Entulho Misto"
+    )
+
+
+def aplicar_residuo_edicao(contexto: dict, residuo: str) -> bool:
+    """Grava o resíduo do equipamento atual; True quando todos foram respondidos."""
+    quantidade = contexto.get("quantidade") or 1
+    indice = contexto.get(INDICE_RESIDUO_EDICAO) or 0
+    residuos = list(contexto.get("residuos") or [])
+    while len(residuos) < quantidade:
+        residuos.append(residuos[-1] if residuos else residuo)
+    residuos = residuos[:quantidade]
+    residuos[indice] = residuo
+    contexto["residuos"] = residuos
+    itens = [dict(item) for item in contexto.get("itens") or []]
+    if indice < len(itens):
+        itens[indice]["residuo_contratado"] = residuo
+        contexto["itens"] = itens
+    if indice + 1 < quantidade:
+        contexto[INDICE_RESIDUO_EDICAO] = indice + 1
+        return False
+    contexto.pop(INDICE_RESIDUO_EDICAO, None)
+    return True
+
+
+def iniciar_residuos_novos(contexto: dict, quantidade_anterior: int) -> bool:
+    """Depois de aumentar a quantidade, prepara a pergunta do resíduo dos novos."""
+    if (contexto.get("quantidade") or 0) <= quantidade_anterior:
+        return False
+    contexto["editing_field"] = "tipo_residuo"
+    contexto[INDICE_RESIDUO_EDICAO] = quantidade_anterior
+    return True

@@ -280,3 +280,97 @@ def test_listagens_informativas_nao_viram_opcoes(db_session, monkeypatch):
         resultado = render(resposta)
         assert "interactive_type" not in resultado, (comando, resposta)
     assert "• 1 - alugado" in router.handle(msg("lista"))
+
+
+# --- Corrigir resíduo: um a um, e só os novos ao aumentar a quantidade ----
+
+
+def _resumo_contentores(router, residuos):
+    for texto in ["1", "1", "Cliente Resíduo", "912345678", str(len(residuos)), "2"]:
+        router.handle(msg(texto))
+    for residuo in residuos:
+        router.handle(toque("pedido_residuo_limpo" if residuo == "Entulho Limpo" else "pedido_residuo_misto"))
+    for texto in ["1", "100", "2", "Rua", "2"]:  # Hoje, valor, pendente, endereço, sem referência
+        router.handle(msg(texto))
+    assert estado_atual(router) == "v24_cadastro_confirmacao"
+
+
+def estado_atual(router):
+    router.db.expire_all()
+    return router.db.query(ConversaWhatsApp).one().estado_atual
+
+
+def test_corrigir_residuo_pergunta_cada_contentor(db_session, monkeypatch):
+    # Relato do Paulo (12/10/2026): com 4 contentores, "Tipo de resíduo"
+    # perguntava só "1/1" e trocava todos para o mesmo resíduo.
+    liberar_operadores(monkeypatch)
+    router = WhatsappRouterAgent(db_session)
+    _resumo_contentores(router, ["Entulho Limpo", "Entulho Misto", "Entulho Limpo", "Entulho Misto"])
+    router.handle(toque("option_2"))  # Corrigir
+
+    pergunta = router.handle(toque("corrigir_pedido:tipo_residuo"))
+    assert "Resíduo do contentor 1/4 (atual: Entulho Limpo)" in pergunta
+    assert ids(render(pergunta)) == ["pedido_residuo_limpo", "pedido_residuo_misto"]
+    assert "2/4 (atual: Entulho Misto)" in router.handle(toque("pedido_residuo_misto"))
+    router.handle(toque("pedido_residuo_misto"))
+    router.handle(toque("pedido_residuo_misto"))
+    resumo = router.handle(toque("pedido_residuo_limpo"))
+
+    contexto = estado(db_session).contexto_json
+    esperado = ["Entulho Misto", "Entulho Misto", "Entulho Misto", "Entulho Limpo"]
+    assert contexto["residuos"] == esperado
+    assert [item["residuo_contratado"] for item in contexto["itens"]] == esperado
+    assert "_residuo_edicao" not in contexto
+    assert "Tipo de resíduo: " + ", ".join(esperado) in resumo
+
+
+def test_aumentar_quantidade_pergunta_o_residuo_dos_novos(db_session, monkeypatch):
+    liberar_operadores(monkeypatch)
+    router = WhatsappRouterAgent(db_session)
+    _resumo_contentores(router, ["Entulho Limpo", "Entulho Misto"])
+    router.handle(toque("option_2"))
+    router.handle(toque("corrigir_pedido:quantidade"))
+
+    pergunta = router.handle(toque("digitar"))
+    assert pergunta == opcoes.QUANTIDADE_DIGITAR
+    assert "Resíduo do contentor 3/4" in router.handle(msg("4"))
+    assert "Resíduo do contentor 4/4" in router.handle(toque("pedido_residuo_misto"))
+    router.handle(toque("pedido_residuo_limpo"))
+
+    conversa = estado(db_session)
+    assert conversa.estado_atual == "v24_cadastro_confirmacao"
+    assert conversa.contexto_json["residuos"] == ["Entulho Limpo", "Entulho Misto", "Entulho Misto", "Entulho Limpo"]
+
+
+def test_diminuir_quantidade_volta_ao_resumo(db_session, monkeypatch):
+    liberar_operadores(monkeypatch)
+    router = WhatsappRouterAgent(db_session)
+    _resumo_contentores(router, ["Entulho Limpo", "Entulho Misto", "Entulho Misto"])
+    router.handle(toque("option_2"))
+    router.handle(toque("corrigir_pedido:quantidade"))
+
+    resumo = router.handle(toque("option_1"))
+
+    conversa = estado(db_session)
+    assert conversa.estado_atual == "v24_cadastro_confirmacao"
+    assert conversa.contexto_json["residuos"] == ["Entulho Limpo"]
+    assert "Quantidade de contentores: 1" in resumo
+
+
+def test_corrigir_residuo_das_carrinhas(db_session, monkeypatch):
+    liberar_operadores(monkeypatch)
+    router = WhatsappRouterAgent(db_session)
+    for texto in ["1", "2", "2", "Obra Carrinha", "912345678", "1", "09:00"]:
+        router.handle(msg(texto))
+    router.handle(toque("pedido_residuo_limpo"))
+    router.handle(toque("pedido_residuo_limpo"))
+    for texto in ["2", "200", "2", "Rua", "2"]:
+        router.handle(msg(texto))
+    router.handle(toque("option_2"))
+
+    assert "Resíduo da carrinha 1/2" in router.handle(toque("corrigir_pedido:tipo_residuo"))
+    router.handle(toque("pedido_residuo_limpo"))
+    router.handle(toque("pedido_residuo_misto"))
+
+    contexto = estado(db_session).contexto_json
+    assert [item["residuo_contratado"] for item in contexto["itens"]] == ["Entulho Limpo", "Entulho Misto"]

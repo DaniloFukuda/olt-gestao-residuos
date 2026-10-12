@@ -775,7 +775,6 @@ def test_router_confirmar_contentor_usa_boundary_especifico(db_session, choice):
 @pytest.mark.parametrize(
     "field,value,context_key,expected",
     [
-        ("quantidade", "2", "quantidade", 2),
         ("nome_cliente", " Novo Nome ", "nome", "Novo Nome"),
         ("telefone", "912 345 678", "telefone", "912345678"),
         ("valor_total", "12,50", "valor", "12.50"),
@@ -812,6 +811,11 @@ def test_cadastro_contentor_edicao_quantidade_copia_item_sem_reconstruir_modalid
     )
     assert len(decision.context["itens"]) == 2
     assert classify_cadastro_modality(decision.context) is CadastroModality.CONTENTOR_PROVEN
+    # Aumentar a quantidade pergunta o resíduo do contentor novo (antes
+    # copiava o do último em silêncio).
+    assert decision.next_state == "v24_cadastro_edicao_opcao"
+    assert decision.context["editing_field"] == "tipo_residuo"
+    assert "Resíduo do contentor 2/2" in decision.response
 
 
 def test_cadastro_contentor_edicao_status_pago_encadeia_forma():

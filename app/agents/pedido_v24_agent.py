@@ -2274,7 +2274,7 @@ class PedidoV24Agent:
                 "chegada" if ctx.get("tipo_solicitacao") == TipoEquipamentoPedido.CARRINHA.value else "entrega",
             ),
             "hora_entrega": self._horario_carrinha_prompt(),
-            "tipo_residuo": self._residuo_prompt({"residuos": [], "quantidade": 1, "tipo_solicitacao": ctx.get("tipo_solicitacao")}),
+            "tipo_residuo": opcoes.residuo_edicao_prompt(ctx),
             "mao_de_obra": self._mao_obra_prompt(),
             "valor_total": "Qual é o valor comercial total?",
             "status_pagamento": "O pedido já está pago?\n\n1. Sim, já está pago\n2. Não, pendente",
@@ -2287,8 +2287,11 @@ class PedidoV24Agent:
         if field == "quantidade":
             if not str(value).isdigit() or not 1 <= int(value) <= 50:
                 return "Informe uma quantidade entre 1 e 50."
+            anterior = ctx.get("quantidade") or 0
             ctx["quantidade"] = int(value)
             self._ajustar_itens_quantidade(ctx)
+            if opcoes.iniciar_residuos_novos(ctx, anterior):
+                return self._advance(conversa, "v24_cadastro_edicao_opcao", ctx, opcoes.residuo_edicao_prompt(ctx))
         elif field == "nome_cliente":
             if message and message.contact_name:
                 ctx["nome"] = message.contact_name.strip()
@@ -2318,10 +2321,9 @@ class PedidoV24Agent:
         elif field == "tipo_residuo":
             residue = self._parse_residue(value)
             if not residue:
-                return self._residuo_prompt({"residuos": [], "quantidade": 1, "tipo_solicitacao": ctx.get("tipo_solicitacao")})
-            ctx["residuos"] = [residue for _ in range(ctx.get("quantidade") or 1)]
-            for item in ctx.get("itens") or []:
-                item["residuo_contratado"] = residue
+                return opcoes.residuo_edicao_prompt(ctx)
+            if not opcoes.aplicar_residuo_edicao(ctx, residue):
+                return self._advance(conversa, "v24_cadastro_edicao_opcao", ctx, opcoes.residuo_edicao_prompt(ctx))
         elif field == "mao_de_obra":
             mao_obra = self._parse_mao_obra(value)
             if mao_obra is None:
